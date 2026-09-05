@@ -168,8 +168,8 @@ export function applyAction(room, actor, action) {
     case 'CLEAR_PACK_SELECTION':
       requirePlayer(actor);
       if (room.phase !== PHASE.PACK_SELECTION) throw new Error('パック選択フェーズではありません');
-      if (actor.confirmed) throw new Error('最終確認済みのパックはGMが解除するまで変更できません');
       actor.packId = null;
+      actor.confirmed = false;
       event(room, 'PACK_SELECTION_CLEARED', { participantId: actor.participantId }, `private:${actor.participantId}`);
       break;
     case 'START_FIRST_STATION':
