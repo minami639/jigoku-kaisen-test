@@ -395,7 +395,7 @@ export function projectState(room, actor) {
     code: room.code, testMode: Boolean(room.testMode), phase: room.phase, station: room.stationIndex >= 0 ? STATIONS[room.stationIndex] : null,
     stationTurn: room.stationTurn, globalTurnIndex: room.globalTurnIndex, timer: room.timer, introductionStep: room.introductionStep || 0,
     me: actor.role === 'GM' ? { participantId: actor.participantId, role: 'GM', name: actor.name } : privatePlayer(actor, room),
-    players: room.players.map(player => ({ participantId: player.participantId, playerNumber: player.playerNumber, name: player.name, hp: player.hp, isDeadState: player.isDeadState, packId: room.phase === PHASE.PACK_SELECTION && !isGm ? null : player.packId, confirmed: player.confirmed, selfIntroductionComplete: Boolean(player.selfIntroductionComplete), selection: isGm || player.participantId === actor.participantId ? player.selection : undefined })),
+    players: room.players.map(player => ({ participantId: player.participantId, playerNumber: player.playerNumber, name: player.name, hp: player.hp, isDeadState: player.isDeadState, packId: player.packId, confirmed: player.confirmed, selfIntroductionComplete: Boolean(player.selfIntroductionComplete), selection: isGm || player.participantId === actor.participantId ? player.selection : undefined })),
     packs: PACKS.map(pack => ({ ...pack, cards: isGm || actor.packId === pack.id ? CARDS.filter(card => card.packId === pack.id) : undefined })), stations: STATIONS,
     testPlayers: isGm ? room.players.map(player => ({ ...privatePlayer(player, room), selection: player.selection, confirmed: player.confirmed })) : undefined,
     revealedUsages: room.phase === PHASE.TURN_RESULT ? room.revealedUsages : [], events: publicEvents

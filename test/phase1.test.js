@@ -57,6 +57,19 @@ test('exactly seven players join and pack duplication blocks station start', () 
   assert.throws(() => applyAction(room, room.gm, { type: 'START_FIRST_STATION' }), /重複/);
 });
 
+test('pack choices and confirmation status are visible to every player during pack selection', () => {
+  const room = createRoom();
+  const players = Array.from({ length: 7 }, (_, index) => joinRoom(room, `PL${index + 1}`));
+  applyAction(room, room.gm, { type: 'OPEN_INTRODUCTION' });
+  applyAction(room, room.gm, { type: 'START_SELF_INTRODUCTION' });
+  completeSelfIntroductions(room);
+  applyAction(room, room.gm, { type: 'OPEN_PACK_SELECTION' });
+  applyAction(room, players[0], { type: 'SELECT_PACK', packId: 'scorch', confirmed: true });
+  const otherView = projectState(room, players[1]);
+  assert.equal(otherView.players[0].packId, 'scorch');
+  assert.equal(otherView.players[0].confirmed, true);
+});
+
 test('secret selections are projected only to owner and GM before reveal', () => {
   const { room, players } = setup();
   applyAction(room, players[0], { type: 'SELECT_CARD', cardId: 'flame-strike', targetId: players[1].participantId });
