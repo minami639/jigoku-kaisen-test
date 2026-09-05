@@ -1,0 +1,14 @@
+{
+  "name": "jigoku-kaisen-unified-card-game",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test",
+    "check": "node --check src/server.js && node --check src/game.js && node --check public/app.js"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: jigoku-kaisen-test
+    runtime: node
+    plan: free
+    branch: unified-card-game
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: ENABLE_TEST_ROOMS
+        value: "false"
+      - key: DATA_FILE
+        value: /tmp/jigoku-kaisen/rooms.json
