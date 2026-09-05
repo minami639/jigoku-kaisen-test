@@ -418,7 +418,7 @@ test('GM tracks only purchase currency reflection while the shop card remains We
   assert.equal(room.purchaseTransactions[1].currencyCocofoliaApplied, false);
 });
 
-test('free-time readiness never auto-advances and unused shop cards persist into ice', () => {
+test('free-time readiness never auto-advances and owned reusable shop cards persist into ice', () => {
   const room = firstShopRoom();
   applyAction(room, room.players[0], { type: 'BUY_SHOP_ITEM', itemId: 'red-bandage', payment: payment({ one: 3 }) });
   room.players.forEach(player => applyAction(room, player, { type: 'SET_FREE_TIME_READY', ready: true }));
@@ -427,7 +427,8 @@ test('free-time readiness never auto-advances and unused shop cards persist into
   while (room.phase === 'STATION_INTRODUCTION') applyAction(room, room.gm, { type: 'ADVANCE_STATION_INTRODUCTION' });
   assert.equal(room.phase, 'TURN_SELECTION');
   assert.equal(room.stationIndex, 1);
-  assert.equal(room.players[0].shopInventory[0].used, false);
+  assert.equal(room.players[0].shopInventory[0].purchased, true);
+  assert.equal(room.players[0].shopInventory[0].totalUseCount, 0);
 });
 
 test('ice station uses a GM-controlled persistent introduction before its first turn', () => {

@@ -75,6 +75,7 @@
 .owned-shop-card p{margin:0 3px;color:#dccdbd;font-size:12px;line-height:1.6}
 .owned-shop-card.used{filter:saturate(.25);opacity:.63}
 .owned-shop-card.used .owned-shop-card-top em{border-color:#a9a19a66;color:#c3bbb2}
+.owned-shop-groups{display:grid;gap:16px}.owned-shop-groups>section>h4{margin:0 0 8px;color:var(--gold);font-size:12px;letter-spacing:.14em}.info-shop-controls{margin-top:16px}.info-shop-controls>h3{margin-bottom:5px}.shop-turn-choice{margin:14px 0;padding:12px;border:1px dashed #6c513d;border-radius:10px;background:#130f0d}.shop-result-message{margin:9px 0 0!important;padding:8px!important;border:1px solid #8c6537!important;border-radius:7px!important;background:#24190f!important;color:#f4d17c!important;font-weight:800}
 @media(max-width:800px){.shop-product{min-height:0}.owned-shop-cards{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:430px){.owned-shop-cards{grid-template-columns:1fr}.game-card{min-height:235px}}
 

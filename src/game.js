@@ -18,7 +18,7 @@ export function createRoom(gmName = 'GM') {
   const gm = { participantId: id(), authToken: token(), role: 'GM', name: gmName.trim() || 'GM' };
   const room = {
     id: id(), code, phase: PHASE.LOBBY, gm, players: [], stationIndex: -1, stationTurn: 0,
-    globalTurnIndex: 0, timer: null, revealedUsages: [], stationResult: null, finalRanking: null, finalEnding: null, rewardNarrationStep: 0, freeTimeIntroductionStep: 0, activeStationEffectIds: [], shopStock: Object.fromEntries(SHOP_ITEMS.map(item => [item.id, item.stock])), currencyTransactions: [], purchaseTransactions: [], transferRequests: [], firstPurchaseCompleted: false, events: [], createdAt: now(), updatedAt: now()
+    globalTurnIndex: 0, timer: null, revealedUsages: [], stationResult: null, stationResults: [], finalRanking: null, finalEnding: null, rewardNarrationStep: 0, freeTimeIntroductionStep: 0, activeStationEffectIds: [], shopStock: Object.fromEntries(SHOP_ITEMS.map(item => [item.id, item.stock])), currencyTransactions: [], purchaseTransactions: [], transferRequests: [], firstPurchaseCompleted: false, events: [], createdAt: now(), updatedAt: now()
   };
   event(room, 'ROOM_CREATED', { gmName: gm.name });
   return room;
@@ -75,11 +75,24 @@ function ensureRoomState(room) {
   room.gameGuideStep ||= 0;
   room.finalRanking ||= null;
   room.finalEnding ||= null;
+  room.stationResults ||= [];
   for (const transaction of room.purchaseTransactions) {
     transaction.currencyCocofoliaApplied ??= Boolean(transaction.cocofoliaApplied);
   }
   for (const player of room.players) {
     player.shopInventory ||= [];
+    for (const entry of player.shopInventory) {
+      entry.inventoryId ||= id();
+      entry.ownerPlayerId ||= player.participantId;
+      entry.purchased ??= true;
+      entry.lastUsedGlobalTurnIndex ??= null;
+      entry.cooldownUntilGlobalTurnIndex ??= null;
+      entry.totalUseCount ??= 0;
+      delete entry.used;
+      delete entry.consumed;
+      delete entry.removedFromGame;
+    }
+    player.infoShopResults ||= [];
     player.purchaseNotice ||= null;
     player.freeTimeReady ||= false;
     player.ongoingEffects ||= [];
@@ -183,6 +196,10 @@ export function applyAction(room, actor, action) {
     case 'SELECT_CARD':
       requirePlayer(actor);
       selectCard(room, actor, action);
+      break;
+    case 'USE_INFORMATION_SHOP':
+      requirePlayer(actor);
+      useInformationShop(room, actor, action);
       break;
     case 'CONFIRM_CARD':
       requirePlayer(actor);
@@ -406,7 +423,7 @@ export function applyAction(room, actor, action) {
     case 'TEST_PLAYER_ACTION': {
       requireGm(actor);
       if (!room.testMode) throw new Error('テストルーム専用操作です');
-      if (!['SELECT_PACK', 'CLEAR_PACK_SELECTION', 'SELECT_CARD', 'CONFIRM_CARD', 'ACK_RESULT', 'BUY_SHOP_ITEM', 'CREATE_TRANSFER_REQUEST', 'DISMISS_PURCHASE_NOTICE', 'SET_FREE_TIME_READY'].includes(action.playerAction?.type)) throw new Error('許可されていないテスト操作です');
+      if (!['SELECT_PACK', 'CLEAR_PACK_SELECTION', 'SELECT_CARD', 'CONFIRM_CARD', 'ACK_RESULT', 'BUY_SHOP_ITEM', 'CREATE_TRANSFER_REQUEST', 'DISMISS_PURCHASE_NOTICE', 'SET_FREE_TIME_READY', 'USE_INFORMATION_SHOP'].includes(action.playerAction?.type)) throw new Error('許可されていないテスト操作です');
       const player = room.players.find(item => item.participantId === action.participantId);
       if (!player) throw new Error('対象PLが見つかりません');
       applyAction(room, player, action.playerAction);
@@ -480,6 +497,13 @@ function prepareTurnSnapshot(room) {
       if (mark.desireReuseAt && mark.desireReuseAt < room.globalTurnIndex) delete mark.desireReuseAt;
       if (mark.greedyTicketReuseAt && mark.greedyTicketReuseAt < room.globalTurnIndex) delete mark.greedyTicketReuseAt;
     }
+    for (const entry of player.shopInventory) {
+      if (entry.cooldownUntilGlobalTurnIndex === room.globalTurnIndex - 1 && entry.cooldownEndedAtGlobalTurnIndex !== room.globalTurnIndex) {
+        entry.cooldownEndedAtGlobalTurnIndex = room.globalTurnIndex;
+        event(room, 'SHOP_COOLDOWN_ENDED', { participantId: player.participantId, playerNumber: player.playerNumber, shopEntryId: entry.inventoryId, itemId: entry.itemId, globalTurnIndex: room.globalTurnIndex }, `private:${player.participantId}`);
+      }
+    }
+    player.immediateShopUse = null;
     player.turnStartDeadState = Boolean(player.isDeadState);
   }
 }
@@ -510,6 +534,7 @@ function startFirstStation(room) {
   room.rewardNarrationStep = 0;
   room.freeTimeIntroductionStep = 0;
   room.activeStationEffectIds = [];
+  room.stationResults = [];
   for (const p of room.players) { p.confirmed = false; p.selection = null; p.stationStats = freshStats(); p.isDeadState = false; p.turnStartDeadState = false; }
   prepareStationStart(room);
   room.stationIntroductionStep = 1;
@@ -552,14 +577,73 @@ function cooldownStatus(room, player, cardId) {
   const mark = player.cardMarks[cardId] || {};
   if (mark.cooldownExtensionUntil >= room.globalTurnIndex) return { code: 'EXTENSION', reason: `【強奪】の効果により、あと${mark.cooldownExtensionUntil - room.globalTurnIndex + 1}ターン使用できません。` };
   const last = lastUsage(player, cardId);
-  if (last && last.globalTurnIndex + 1 === room.globalTurnIndex) return { code: 'NORMAL', reason: '前のターンに使用したため、このターンは使用できません。' };
+  if (last?.normalCooldownStartsAt === room.globalTurnIndex) return { code: 'NORMAL', reason: '前のターンに使用したため、このターンは使用できません。' };
   return { code: null, reason: null };
 }
 function cooldownReason(player, cardId, globalTurnIndex) {
   const mark = player.cardMarks[cardId] || {};
   if (mark.cooldownExtensionUntil >= globalTurnIndex) return `【強奪】の効果により、あと${mark.cooldownExtensionUntil - globalTurnIndex + 1}ターン使用できません。`;
   const last = lastUsage(player, cardId);
-  return last && last.globalTurnIndex + 1 === globalTurnIndex ? '前のターンに使用したため、このターンは使用できません。' : null;
+  return last?.normalCooldownStartsAt === globalTurnIndex ? '前のターンに使用したため、このターンは使用できません。' : null;
+}
+
+function shopEntryById(player, entryIdOrItemId) {
+  return player.shopInventory.find(entry => entry.inventoryId === entryIdOrItemId)
+    || player.shopInventory.find(entry => entry.itemId === entryIdOrItemId);
+}
+function shopCooldownStatus(room, entry) {
+  if (Number(entry.cooldownUntilGlobalTurnIndex || 0) >= room.globalTurnIndex) {
+    return { code: 'NORMAL', reason: 'このSHOPカードは前のターンに使用したため、このターンは使用できません。' };
+  }
+  return { code: null, reason: null };
+}
+function currentImmediateShopUse(room, player) {
+  return player.immediateShopUse?.globalTurnIndex === room.globalTurnIndex ? player.immediateShopUse : null;
+}
+function selectedShopEntry(room, player, selection) {
+  if (!selection?.shopEntryId) return null;
+  const entry = shopEntryById(player, selection.shopEntryId);
+  if (!entry) throw new Error('指定したSHOPカードを所持していません。');
+  const item = SHOP_ITEM_BY_ID[entry.itemId];
+  if (!item) throw new Error('指定したSHOPカードが見つかりません。');
+  return { entry, item };
+}
+function validateShopEntryForUse(room, player, entry, item) {
+  if (!entry || entry.ownerPlayerId !== player.participantId || !entry.purchased) throw new Error('指定したSHOPカードを所持していません。');
+  const status = shopCooldownStatus(room, entry);
+  if (status.code) throw new Error(status.reason);
+  return status;
+}
+function startShopUse(room, player, entry, item, { timing = 'REVEAL', visibility = 'public', targetId = null } = {}) {
+  entry.lastUsedGlobalTurnIndex = room.globalTurnIndex;
+  entry.cooldownUntilGlobalTurnIndex = room.globalTurnIndex + 1;
+  entry.totalUseCount = Number(entry.totalUseCount || 0) + 1;
+  const payload = { participantId: player.participantId, playerNumber: player.playerNumber, shopEntryId: entry.inventoryId, itemId: item.id, useCount: entry.totalUseCount, timing, globalTurnIndex: room.globalTurnIndex };
+  event(room, 'SHOP_USED', payload, visibility);
+  event(room, 'SHOP_COOLDOWN_STARTED', { ...payload, unavailableTurn: entry.cooldownUntilGlobalTurnIndex }, visibility);
+  return { entry, item, targetId, timing };
+}
+function shopUseLabel(item) { return `【${item.name}】`; }
+
+function useInformationShop(room, actor, action) {
+  if (room.phase !== PHASE.TURN_SELECTION || actor.confirmed) throw new Error('カード選択中のみ情報系SHOPを使用できます。');
+  if (actor.selection?.shopEntryId || currentImmediateShopUse(room, actor)) throw new Error('このターンはすでにSHOPカードを使用しています。');
+  const entry = shopEntryById(actor, action.shopEntryId || action.shopItemId);
+  const item = entry && SHOP_ITEM_BY_ID[entry.itemId];
+  if (!item || item.timing !== 'info') throw new Error('情報系SHOPカードを指定してください。');
+  validateShopEntryForUse(room, actor, entry, item);
+  const target = playerById(room, action.targetId);
+  if (!target || target === actor) throw new Error('自分以外のPLを指定してください。');
+  const targetCard = target.selection ? CARD_BY_ID[target.selection.cardId] : null;
+  let result;
+  if (!targetCard) result = '仮選択はまだありません。';
+  else if (item.effectType === 'INFO_CATEGORY') result = `PL${target.playerNumber}の仮選択カードの主分類は「${targetCard.category === 'attack' ? '攻撃' : ({ defense: '防御', support: '補助', heal: '回復', interference: '妨害' }[targetCard.category] || 'それ以外')}」です。`;
+  else if (item.effectType === 'INFO_ATTACK_OR_OTHER') result = `PL${target.playerNumber}の仮選択カードは「${targetCard.category === 'attack' ? '攻撃' : 'それ以外'}」です。`;
+  else result = `PL${target.playerNumber}の仮選択カードは【${targetCard.name}】です。`;
+  const shopUse = startShopUse(room, actor, entry, item, { timing: 'INFO', visibility: `private:${actor.participantId}`, targetId: target.participantId });
+  actor.immediateShopUse = { entryId: entry.inventoryId, itemId: item.id, globalTurnIndex: room.globalTurnIndex, targetId: target.participantId };
+  actor.infoShopResults.push({ id: id(), itemId: item.id, targetId: target.participantId, result, globalTurnIndex: room.globalTurnIndex, at: now() });
+  event(room, 'SHOP_INFORMATION_REVEALED', { ...shopUse, result }, `private:${actor.participantId}`);
 }
 
 function selectCard(room, actor, action) {
@@ -567,6 +651,13 @@ function selectCard(room, actor, action) {
   const card = CARD_BY_ID[action.cardId];
   if (!card || card.packId !== actor.packId) throw new Error('自分のパックのカードではありません');
   if (card.id === 'encore' && !hasEncoreCandidate(room, actor)) throw new Error('再演できる使用履歴がありません。');
+  const requestedShopEntryId = action.shopEntryId || action.shopItemId || null;
+  const shop = requestedShopEntryId ? selectedShopEntry(room, actor, { shopEntryId: requestedShopEntryId }) : null;
+  if (shop) {
+    if (shop.item.timing === 'info') throw new Error('情報系SHOPカードは情報確認ボタンから使用してください。');
+    if (currentImmediateShopUse(room, actor)) throw new Error('このターンはすでに情報系SHOPカードを使用しています。');
+    validateShopEntryForUse(room, actor, shop.entry, shop.item);
+  }
   const status = cooldownStatus(room, actor, card.id);
   let ctBypass = null;
   if (status.code === 'EXTENSION') throw new Error(status.reason);
@@ -575,9 +666,12 @@ function selectCard(room, actor, action) {
     if (action.ctBypass === 'DESIRE' && mark.desireReuseAt === room.globalTurnIndex) ctBypass = 'DESIRE';
     else if (action.ctBypass === 'GREEDY_TICKET' && mark.greedyTicketReuseAt === room.globalTurnIndex) ctBypass = 'GREEDY_TICKET';
     else if (action.ctBypass === 'HUNGER' && stationModifiers(room).normalCooldownReuse && !actor.hungerReuseUsed) ctBypass = 'HUNGER';
+    else if (shop?.item.effectType === 'NORMAL_CT_BYPASS') ctBypass = 'HELL_KEY';
     else throw new Error(status.reason);
+  } else if (shop?.item.effectType === 'NORMAL_CT_BYPASS') {
+    throw new Error('【地獄の鍵】は通常クールタイム中の七獄カードにのみ使用できます。');
   }
-  const selection = { cardId: card.id, targetId: action.targetId || null, cardTargetId: action.cardTargetId || null, stateKey: action.stateKey || null, copyUsageId: action.copyUsageId || null, copyKind: action.copyKind || null, ctBypass };
+  const selection = { cardId: card.id, targetId: action.targetId || null, cardTargetId: action.cardTargetId || null, stateKey: action.stateKey || null, copyUsageId: action.copyUsageId || null, copyKind: action.copyKind || null, shopEntryId: shop?.entry.inventoryId || null, shopTargetId: action.shopTargetId || null, shopCardTargetId: action.shopCardTargetId || null, ctBypass };
   validateSelection(room, actor, selection);
   actor.selection = selection;
 }
@@ -606,12 +700,32 @@ function validateSelection(room, actor, selection) {
     const removable = playerById(room, selection.targetId).ongoingEffects.filter(effect => effect.removable !== false);
     if (removable.length && !removable.some(effect => effect.stackKey === selection.stateKey)) throw new Error('解除する持越状態を選択してください');
   }
+  const shop = selectedShopEntry(room, actor, selection);
+  if (!shop) return;
+  validateShopEntryForUse(room, actor, shop.entry, shop.item);
+  if (currentImmediateShopUse(room, actor)) throw new Error('このターンはすでに情報系SHOPカードを使用しています。');
+  if (shop.item.effectType === 'GRUDGE' || shop.item.effectType === 'SECRET_TARGET_NOTICE') {
+    const target = playerById(room, selection.shopTargetId);
+    if (!target || target === actor) throw new Error(shop.item.effectType === 'GRUDGE' ? '怨返しする相手を自分以外から1人選んでください。' : '通知先を自分以外から1人選んでください。');
+  }
+  if (shop.item.effectType === 'SECRET_TARGET_NOTICE' && card.category !== 'attack') throw new Error('【共犯の糸】は攻撃カードと組み合わせて使用してください。');
+  if (shop.item.effectType === 'GREEDY_TICKET') {
+    const targetCard = CARD_BY_ID[selection.shopCardTargetId];
+    const mark = targetCard && actor.cardMarks[targetCard.id] || {};
+    if (!targetCard || targetCard.packId !== actor.packId || targetCard.category === 'attack') throw new Error('【欲張り札】は自分の攻撃以外の七獄カードを指定してください。');
+    if (cooldownStatus(room, actor, targetCard.id).code === 'NORMAL' || mark.desire || mark.greedyTicketPending || mark.desireReuseAt || mark.greedyTicketReuseAt || mark.cooldownExtensionUntil >= room.globalTurnIndex) throw new Error('そのカードには欲張り札を予約できません。');
+  }
 }
 
 function hasEncoreCandidate(room, player) {
   return player.cardUsage.some(use => use.stationIndex <= room.stationIndex - 3 && ['attack', 'defense', 'heal'].includes(CARD_BY_ID[use.cardId]?.effect?.kind));
 }
 function validateStoredCooldown(room, player, selection) {
+  const shop = selectedShopEntry(room, player, selection);
+  if (shop) {
+    validateShopEntryForUse(room, player, shop.entry, shop.item);
+    if (currentImmediateShopUse(room, player)) throw new Error('このターンはすでに情報系SHOPカードを使用しています。');
+  }
   const status = cooldownStatus(room, player, selection.cardId);
   if (status.code === 'EXTENSION') throw new Error(status.reason);
   if (status.code !== 'NORMAL') return;
@@ -619,6 +733,7 @@ function validateStoredCooldown(room, player, selection) {
   if (selection.ctBypass === 'DESIRE' && mark.desireReuseAt === room.globalTurnIndex) return;
   if (selection.ctBypass === 'GREEDY_TICKET' && mark.greedyTicketReuseAt === room.globalTurnIndex) return;
   if (selection.ctBypass === 'HUNGER' && stationModifiers(room).normalCooldownReuse && !player.hungerReuseUsed) return;
+  if (selection.ctBypass === 'HELL_KEY' && shop?.item.effectType === 'NORMAL_CT_BYPASS') return;
   throw new Error(status.reason);
 }
 
@@ -691,7 +806,7 @@ function resolveTurnLegacy(room) {
   event(room, 'TURN_RESOLVED', { stationTurn: room.stationTurn, globalTurnIndex: room.globalTurnIndex });
 }
 
-function publicUsage(use) { return { participantId: use.player.participantId, playerNumber: use.player.playerNumber, cardId: use.card.id, targetId: use.targetId }; }
+function publicUsage(use) { return { participantId: use.player.participantId, playerNumber: use.player.playerNumber, cardId: use.card.id, targetId: use.targetId, shopItemId: use.shopItem?.id || null }; }
 function recordDamage(source, target, amount) { source.stationStats.damageDealt += amount; source.totalStats.damageDealt += amount; source.stationStats.stationScore += amount; target.stationStats.damageTaken += amount; target.totalStats.damageTaken += amount; }
 function applyStationDamage(room, attacks) {
   if (STATIONS[room.stationIndex]?.id !== 'needle') return;
@@ -721,7 +836,7 @@ function engineModifiers(room) { return stationModifiers(room); }
 function engineMarkZero(room, player, before) {
   if (before > 0 && player.hp === 0) {
     player.stationStats.reachedZero = true;
-    event(room, 'HP_ZERO_REACHED', { participantId: player.participantId });
+    event(room, 'HP_ZERO_REACHED', { participantId: player.participantId, stationId: currentStation(room)?.id || null });
   }
 }
 function engineSupport(room, player, amount, payload = {}) {
@@ -795,10 +910,26 @@ function engineExpandEncore(room, usages) {
     event(room, 'ENCORE_EXPANDED', { participantId: use.player.participantId, sourceCardId: source.cardId, kind, value });
   }
 }
+function engineStartShopUses(room, usages) {
+  for (const use of usages.filter(item => item.shopEntry && item.shopItem)) {
+    use.shop = startShopUse(room, use.player, use.shopEntry, use.shopItem, { timing: 'REVEAL', visibility: 'public', targetId: use.shopTargetId || null });
+  }
+}
 function engineTargetChanges(room, usages) {
   for (const use of usages.filter(item => item.effect.kind === 'targetChange')) {
     const targetUse = usages.find(item => item.player.participantId === use.targetId);
     if (!targetUse || !targetUse.targetId || targetUse.card.targetType !== 'player') { use.outcome = 'FIZZLED'; continue; }
+    if (targetUse.shopItem?.effectType === 'PREVENT_TARGET_CHANGE') {
+      use.outcome = 'FIZZLED';
+      event(room, 'SHOP_EFFECT_APPLIED', { participantId: targetUse.player.participantId, itemId: targetUse.shopItem.id, effect: 'TARGET_CHANGE_PREVENTED', sourceId: use.player.participantId });
+      continue;
+    }
+    if (targetUse.shopItem?.effectType === 'PREVENT_TARGET_CHANGE_ONCE' && !targetUse.shopTargetChangePrevented) {
+      targetUse.shopTargetChangePrevented = true;
+      use.outcome = 'FIZZLED';
+      event(room, 'SHOP_EFFECT_APPLIED', { participantId: targetUse.player.participantId, itemId: targetUse.shopItem.id, effect: 'TARGET_CHANGE_PREVENTED_ONCE', sourceId: use.player.participantId });
+      continue;
+    }
     const candidates = room.players.filter(player => player.participantId !== targetUse.player.participantId && player.participantId !== targetUse.targetId);
     if (!candidates.length) { use.outcome = 'FIZZLED'; event(room, 'TARGET_CHANGE_FIZZLED', { sourceId: use.player.participantId, targetId: targetUse.player.participantId }); continue; }
     const fromTargetId = targetUse.targetId;
@@ -820,6 +951,10 @@ function engineNullify(room, usages) {
       targetUse.carryInvalidated = true;
       event(room, 'CARRY_COMPONENT_NULLIFIED', { sourceId: use.player.participantId, targetPlayerId: targetUse.player.participantId, cardId: targetUse.card.id });
     } else use.outcome = 'FIZZLED';
+    if ((targetUse.invalidated || targetUse.carryInvalidated) && targetUse.shopItem?.effectType === 'NO_NORMAL_CT_ON_NULLIFY') {
+      targetUse.skipNormalCooldown = true;
+      event(room, 'SHOP_EFFECT_APPLIED', { participantId: targetUse.player.participantId, itemId: targetUse.shopItem.id, effect: 'NORMAL_COOLDOWN_PREVENTED', cardId: targetUse.card.id });
+    }
   }
 }
 function engineCardBoosts(room, usages) {
@@ -850,40 +985,68 @@ function engineCardBoosts(room, usages) {
     else if (['defense', 'needleDefense', 'bloodShield', 'defenseAndRemoveState'].includes(targetUse.effect.kind)) targetUse.moraleDefense = { source: use.player, amount: use.effect.amount };
     else use.outcome = 'FIZZLED';
   }
+  for (const use of usages.filter(item => item.shopItem?.effectType === 'ATTACK_BONUS')) {
+    if (engineUseHasAttack(use) && !use.attackInvalidated) add(use, use.player, 1, 'SHOP_ATTACK_BONUS');
+    else {
+      use.shopEffectFailed = true;
+      event(room, 'SHOP_EFFECT_FAILED', { participantId: use.player.participantId, itemId: use.shopItem.id, reason: 'ATTACK_EFFECT_REQUIRED' });
+    }
+  }
   return boosts;
 }
 function engineReserveDefenses(room, usages, modifiers, focusCounts) {
   const defenses = new Map();
   for (const use of usages) {
-    if (use.invalidated) continue;
-    const kind = use.copied?.kind || use.effect.kind;
-    let reduction = use.copied?.kind === 'defense' ? use.copied.value : use.effect.reduction || 0;
-    if (kind === 'needleDefense') reduction = (focusCounts.get(use.targetId) || 0) >= 2 ? use.effect.concentrationReduction : use.effect.reduction;
-    if (['defense', 'needleDefense', 'bloodShield', 'defenseAndRemoveState'].includes(kind)) {
-      if (use.card.category === 'defense') reduction += modifiers.defenseBonus;
-      const contributions = [{ source: use.player, amount: reduction }];
-      if (use.moraleDefense) contributions.push({ source: use.moraleDefense.source, amount: use.moraleDefense.amount, reason: 'MORALE' });
-      engineAddDefense(defenses, use.targetId, { use, kind: 'numeric', remaining: contributions.reduce((sum, item) => sum + item.amount, 0), contributions });
+    if (!use.invalidated) {
+      const kind = use.copied?.kind || use.effect.kind;
+      let reduction = use.copied?.kind === 'defense' ? use.copied.value : use.effect.reduction || 0;
+      if (kind === 'needleDefense') reduction = (focusCounts.get(use.targetId) || 0) >= 2 ? use.effect.concentrationReduction : use.effect.reduction;
+      if (['defense', 'needleDefense', 'bloodShield', 'defenseAndRemoveState'].includes(kind)) {
+        if (use.card.category === 'defense') reduction += modifiers.defenseBonus;
+        const contributions = [{ source: use.player, amount: reduction }];
+        if (use.moraleDefense) contributions.push({ source: use.moraleDefense.source, amount: use.moraleDefense.amount, reason: 'MORALE' });
+        engineAddDefense(defenses, use.targetId, { use, kind: 'numeric', remaining: contributions.reduce((sum, item) => sum + item.amount, 0), contributions });
+      }
+      if (kind === 'reversal') engineAddDefense(defenses, use.targetId, { use, kind: 'reversal', remaining: 1, contributions: [] });
     }
-    if (kind === 'reversal') engineAddDefense(defenses, use.targetId, { use, kind: 'reversal', remaining: 1, contributions: [] });
+    if (use.shopItem?.effectType === 'DIRECT_REDUCTION') {
+      engineAddDefense(defenses, use.player.participantId, { use, shopItemId: use.shopItem.id, kind: 'numeric', remaining: 1, contributions: [{ source: use.player, amount: 1, reason: 'SHOP_DIRECT_REDUCTION' }] });
+    }
+    if (use.shopItem?.effectType === 'FIRST_DIRECT_REDUCTION') {
+      engineAddDefense(defenses, use.player.participantId, { use, shopItemId: use.shopItem.id, kind: 'firstDirect', remaining: 2, contributions: [{ source: use.player, amount: 2, reason: 'SHOP_FIRST_DIRECT_REDUCTION' }] });
+    }
   }
   for (const entries of defenses.values()) entries.sort((a, b) => a.use.player.playerNumber - b.use.player.playerNumber);
   return defenses;
 }
 function engineReserveState(room, usages) {
   const healReduction = new Map();
-  for (const use of usages.filter(item => !item.invalidated)) {
-    if (use.effect.kind === 'carryState' && !use.carryInvalidated) engineAddCarry(room, playerById(room, use.targetId), use.effect.state, use.player, use.card.id);
-    if (use.effect.kind === 'cooldownExtension') {
+  for (const use of usages) {
+    if (!use.invalidated && use.effect.kind === 'carryState' && !use.carryInvalidated) engineAddCarry(room, playerById(room, use.targetId), use.effect.state, use.player, use.card.id);
+    if (!use.invalidated && use.effect.kind === 'cooldownExtension') {
       const targetUse = usages.find(item => item.player.participantId === use.targetId);
       if (!targetUse) { use.outcome = 'FIZZLED'; continue; }
+      if (targetUse.shopItem?.effectType === 'PREVENT_EXTENSION') {
+        event(room, 'SHOP_EFFECT_APPLIED', { participantId: targetUse.player.participantId, itemId: targetUse.shopItem.id, effect: 'COOLDOWN_EXTENSION_PREVENTED', cardId: targetUse.card.id });
+        continue;
+      }
       const mark = targetUse.player.cardMarks[targetUse.card.id] || {};
       const until = room.globalTurnIndex + use.effect.turns;
       targetUse.player.cardMarks[targetUse.card.id] = { ...mark, cooldownExtensionUntil: Math.max(mark.cooldownExtensionUntil || 0, until) };
       event(room, 'COOLDOWN_EXTENSION_APPLIED', { sourceId: use.player.participantId, targetId: targetUse.player.participantId, cardId: targetUse.card.id, until });
     }
-    if (use.effect.kind === 'healReduction') healReduction.set(use.targetId, (healReduction.get(use.targetId) || 0) + use.effect.reduction);
-    if (['defenseAndRemoveState', 'healAndRemoveState'].includes(use.effect.kind)) engineRemoveCarry(room, use);
+    if (!use.invalidated && use.effect.kind === 'healReduction') healReduction.set(use.targetId, (healReduction.get(use.targetId) || 0) + use.effect.reduction);
+    if (!use.invalidated && ['defenseAndRemoveState', 'healAndRemoveState'].includes(use.effect.kind)) engineRemoveCarry(room, use);
+    if (use.shopItem?.effectType === 'GREEDY_TICKET') {
+      const targetCard = CARD_BY_ID[use.shopCardTargetId];
+      if (!targetCard) {
+        use.shopEffectFailed = true;
+        event(room, 'SHOP_EFFECT_FAILED', { participantId: use.player.participantId, itemId: use.shopItem.id, reason: 'CARD_TARGET_REQUIRED' });
+      } else {
+        use.player.cardMarks[targetCard.id] = { ...(use.player.cardMarks[targetCard.id] || {}), greedyTicketPending: true };
+        event(room, 'SHOP_EFFECT_APPLIED', { participantId: use.player.participantId, itemId: use.shopItem.id, effect: 'GREEDY_TICKET_RESERVED', cardId: targetCard.id }, `private:${use.player.participantId}`);
+      }
+    }
   }
   return healReduction;
 }
@@ -944,11 +1107,28 @@ function engineSpendDefense(room, defense, amount, target, attack) {
     contribution.amount -= applied;
     remaining -= applied;
     attack.defenseSources ||= [];
-    attack.defenseSources.push({ source: contribution.source, amount: applied, cardId: defense.use.card.id, reason: contribution.reason || 'DEFENSE' });
-    event(room, 'DEFENSE_ALLOCATED', { sourceId: contribution.source.participantId, targetId: target.participantId, cardId: defense.use.card.id, amount: applied, reason: contribution.reason || 'DEFENSE' });
+    const cardId = defense.shopItemId || defense.use.card.id;
+    attack.defenseSources.push({ source: contribution.source, amount: applied, cardId, reason: contribution.reason || 'DEFENSE' });
+    event(room, 'DEFENSE_ALLOCATED', { sourceId: contribution.source.participantId, targetId: target.participantId, cardId, amount: applied, reason: contribution.reason || 'DEFENSE' });
     if (!remaining) break;
   }
   defense.remaining -= amount;
+}
+function engineApplyFirstDirectReduction(room, defenses, target, attack) {
+  const entries = defenses.get(target.participantId) || [];
+  const defense = entries.find(item => item.kind === 'firstDirect' && item.remaining > 0);
+  if (!defense) return;
+  let remaining = defense.remaining;
+  for (const component of attack.components) {
+    const prevented = Math.min(component.amount, remaining);
+    if (!prevented) continue;
+    engineSpendDefense(room, defense, prevented, target, attack);
+    component.amount -= prevented;
+    attack.prevented += prevented;
+    remaining -= prevented;
+    if (!remaining) break;
+  }
+  event(room, 'SHOP_EFFECT_APPLIED', { participantId: defense.use.player.participantId, itemId: defense.shopItemId, effect: 'FIRST_DIRECT_REDUCTION', amount: 2 - defense.remaining });
 }
 function engineAllocateReduction(room, defenses, attacks, phase) {
   for (const [targetId, entries] of defenses) {
@@ -970,13 +1150,14 @@ function engineAllocateReduction(room, defenses, attacks, phase) {
     }
   }
 }
-function engineResolveAttackEvents(room, attacks) {
+function engineResolveAttackEvents(room, attacks, defenses) {
   for (const attack of [...attacks].sort((a, b) => a.player.playerNumber - b.player.playerNumber)) {
     const target = playerById(room, attack.targetId);
     if (attack.completeDefense) {
       event(room, 'COMPLETE_DEFENSE', { defenderId: attack.completeDefense.use.player.participantId, targetId: target.participantId, cardId: attack.use.card.id, phase: attack.phase });
       continue;
     }
+    engineApplyFirstDirectReduction(room, defenses, target, attack);
     const hpBefore = target.hp;
     for (const component of attack.components) {
       const before = target.hp;
@@ -1035,27 +1216,39 @@ function engineApplyOnHitStates(room, attacks) {
     engineAddCarry(room, playerById(room, use.targetId), use.effect.onHitState, use.player, use.card.id);
   }
 }
-function engineReaction(room, source, target, amount, cardId, kind, modifiers) {
+function engineReaction(room, source, target, amount, cardId, kind, modifiers, usages) {
+  const shopUse = usages.find(use => use.player === target && (use.shopItem?.effectType === 'FIRST_REACTION_ZERO' || use.shopItem?.effectType === 'REACTION_REDUCTION'));
+  let prevented = 0;
+  if (shopUse?.shopItem?.effectType === 'FIRST_REACTION_ZERO' && !shopUse.shopReactionUsed) {
+    shopUse.shopReactionUsed = true;
+    prevented = Math.max(0, amount + modifiers.reactionBonus);
+    event(room, 'SHOP_EFFECT_APPLIED', { participantId: target.participantId, itemId: shopUse.shopItem.id, effect: 'FIRST_REACTION_ZERO', prevented });
+  } else if (shopUse?.shopItem?.effectType === 'REACTION_REDUCTION') {
+    shopUse.shopReactionRemaining ??= 2;
+    prevented = Math.min(shopUse.shopReactionRemaining, Math.max(0, amount + modifiers.reactionBonus));
+    shopUse.shopReactionRemaining -= prevented;
+    if (prevented) event(room, 'SHOP_EFFECT_APPLIED', { participantId: target.participantId, itemId: shopUse.shopItem.id, effect: 'REACTION_REDUCTION', prevented });
+  }
   const before = target.hp;
-  target.hp = Math.max(0, target.hp - Math.max(0, amount + modifiers.reactionBonus));
+  target.hp = Math.max(0, target.hp - Math.max(0, amount + modifiers.reactionBonus - prevented));
   const actual = before - target.hp;
   recordDamage(source, target, actual);
   engineMarkZero(room, target, before);
-  event(room, 'REACTION_DAMAGE', { sourceId: source.participantId, targetId: target.participantId, cardId, kind, amount: actual });
+  event(room, 'REACTION_DAMAGE', { sourceId: source.participantId, targetId: target.participantId, cardId, kind, amount: actual, prevented });
 }
 function engineReactions(room, usages, attacks, modifiers) {
-  for (const attack of attacks.filter(item => item.completeDefense?.kind === 'reversal' && item.reversalValue > 0)) engineReaction(room, attack.completeDefense.use.player, attack.player, attack.reversalValue, 'reversal', 'REVERSAL', modifiers);
+  for (const attack of attacks.filter(item => item.completeDefense?.kind === 'reversal' && item.reversalValue > 0)) engineReaction(room, attack.completeDefense.use.player, attack.player, attack.reversalValue, 'reversal', 'REVERSAL', modifiers, usages);
   for (const use of usages.filter(item => item.effect.kind === 'bloodShield' && !item.invalidated)) {
     const hits = attacks.filter(attack => attack.targetId === use.targetId && attack.actual > 0);
     if (!hits.length) continue;
     const attacker = [...hits].sort((a, b) => b.actual - a.actual || a.player.playerNumber - b.player.playerNumber)[0].player;
-    engineReaction(room, use.player, attacker, use.effect.reflection, use.card.id, 'BLOOD_SHIELD', modifiers);
+    engineReaction(room, use.player, attacker, use.effect.reflection, use.card.id, 'BLOOD_SHIELD', modifiers, usages);
   }
   for (const use of usages.filter(item => item.effect.kind === 'counterStance' && !item.invalidated)) {
-    if (attacks.some(attack => attack.player.participantId === use.targetId && attack.targetId === use.player.participantId && attack.actual > 0)) engineReaction(room, use.player, playerById(room, use.targetId), use.effect.damage, use.card.id, 'COUNTER_STANCE', modifiers);
+    if (attacks.some(attack => attack.player.participantId === use.targetId && attack.targetId === use.player.participantId && attack.actual > 0)) engineReaction(room, use.player, playerById(room, use.targetId), use.effect.damage, use.card.id, 'COUNTER_STANCE', modifiers, usages);
   }
 }
-function engineHeal(room, source, targetId, amount, cardId, healReduction, modifiers, kind = 'HEAL', support = true) {
+function engineHeal(room, source, targetId, amount, cardId, healReduction, modifiers, kind = 'HEAL', support = true, metadata = {}) {
   const target = playerById(room, targetId);
   const boosted = amount + (kind === 'ABSORB' ? modifiers.absorbBonus : modifiers.healBonus);
   const reduced = Math.min(boosted, healReduction.get(targetId) || 0);
@@ -1063,19 +1256,77 @@ function engineHeal(room, source, targetId, amount, cardId, healReduction, modif
   const before = target.hp;
   target.hp = Math.min(15, target.hp + boosted - reduced);
   const actual = target.hp - before;
+  const withoutShopActual = metadata.shopBonusAmount
+    ? Math.max(0, Math.min(15, before + Math.max(0, boosted - metadata.shopBonusAmount - reduced)) - before)
+    : 0;
+  const shopRecoveryAmount = metadata.shopItemId ? (metadata.shopBonusAmount ? Math.max(0, actual - withoutShopActual) : actual) : 0;
   if (support && source !== target) engineSupport(room, source, actual, { targetId, cardId, reason: 'HEAL' });
-  event(room, 'HEAL', { sourceId: source.participantId, targetId, cardId, kind, amount: actual, reduced });
+  event(room, 'HEAL', { sourceId: source.participantId, targetId, cardId, kind, amount: actual, reduced, ...metadata, shopRecoveryAmount });
 }
 function engineRecovery(room, usages, attacks, snapshot, healReduction, modifiers) {
   for (const use of usages.filter(item => !item.invalidated)) {
     const kind = use.copied?.kind || use.effect.kind;
     let amount = use.copied?.kind === 'heal' ? use.copied.value : use.effect.amount || 0;
     if (use.effect.condition === 'targetHpZero' && snapshot[use.targetId] === 0) amount += use.effect.conditionHeal || 0;
-    if (kind === 'heal' && amount) engineHeal(room, use.player, use.targetId, amount, use.card.id, healReduction, modifiers);
+    if (kind === 'heal' && use.shopItem?.effectType === 'ALLY_HEAL_BONUS' && use.targetId !== use.player.participantId) amount += 1;
+    if (kind === 'heal' && amount) engineHeal(room, use.player, use.targetId, amount, use.card.id, healReduction, modifiers, 'HEAL', true, use.shopItem?.effectType === 'ALLY_HEAL_BONUS' ? { shopItemId: use.shopItem.id, shopBonusAmount: 1 } : {});
     if (use.effect.absorb) {
       const attack = attacks.find(item => item.use === use);
       const allowed = use.effect.condition !== 'targetHpGreaterThanOwner' || snapshot[use.targetId] > snapshot[use.player.participantId];
       if (attack?.actual > 0 && allowed) engineHeal(room, use.player, use.player.participantId, use.effect.absorb, use.card.id, healReduction, modifiers, 'ABSORB', false);
+    }
+  }
+}
+function engineShopPostEffects(room, usages, attacks, healReduction, modifiers) {
+  for (const use of usages.filter(item => item.shopItem)) {
+    const item = use.shopItem;
+    const owner = use.player;
+    if (item.effectType === 'SECRET_TARGET_NOTICE') {
+      const recipient = playerById(room, use.shopTargetId);
+      if (recipient && use.card.category === 'attack' && use.targetId) {
+        event(room, 'SHOP_SECRET_TARGET_NOTIFIED', { sourceId: owner.participantId, recipientId: recipient.participantId, itemId: item.id, targetId: use.targetId }, `private:${recipient.participantId}`);
+      } else {
+        use.shopEffectFailed = true;
+        event(room, 'SHOP_EFFECT_FAILED', { participantId: owner.participantId, itemId: item.id, reason: 'NO_ATTACK_TARGET' });
+      }
+    }
+    if (item.effectType === 'GRUDGE') {
+      const target = playerById(room, use.shopTargetId);
+      const triggered = attacks.some(attack => attack.targetId === owner.participantId && attack.components.some(component => component.source.participantId === target?.participantId && component.actual > 0));
+      if (target && triggered) {
+        const before = target.hp;
+        target.hp = Math.max(0, target.hp - 1);
+        recordDamage(owner, target, before - target.hp);
+        engineMarkZero(room, target, before);
+        event(room, 'SHOP_EFFECT_APPLIED', { participantId: owner.participantId, itemId: item.id, effect: 'GRUDGE_TRIGGERED', targetId: target.participantId, amount: before - target.hp });
+        event(room, 'SHOP_DAMAGE', { sourceId: owner.participantId, targetId: target.participantId, itemId: item.id, amount: before - target.hp, reason: 'GRUDGE' });
+      } else {
+        use.shopEffectFailed = true;
+        event(room, 'SHOP_EFFECT_FAILED', { participantId: owner.participantId, itemId: item.id, reason: 'GRUDGE_NOT_TRIGGERED' });
+      }
+    }
+    if (item.effectType === 'POST_HEAL') {
+      engineHeal(room, owner, owner.participantId, 1, item.id, healReduction, modifiers, 'SHOP_HEAL', false, { shopItemId: item.id });
+      event(room, 'SHOP_EFFECT_APPLIED', { participantId: owner.participantId, itemId: item.id, effect: 'POST_HEAL' });
+    }
+    if (item.effectType === 'FIZZLE_HEAL') {
+      if (use.outcome === 'FIZZLED' || use.attackInvalidated || use.invalidated) {
+        engineHeal(room, owner, owner.participantId, 1, item.id, healReduction, modifiers, 'SHOP_HEAL', false, { shopItemId: item.id });
+        event(room, 'SHOP_EFFECT_APPLIED', { participantId: owner.participantId, itemId: item.id, effect: 'FIZZLE_HEAL' });
+      } else {
+        use.shopEffectFailed = true;
+        event(room, 'SHOP_EFFECT_FAILED', { participantId: owner.participantId, itemId: item.id, reason: 'CARD_EFFECT_RESOLVED' });
+      }
+    }
+    if (item.effectType === 'DIRECT_DAMAGE_THRESHOLD_HEAL') {
+      const total = attacks.filter(attack => attack.targetId === owner.participantId && attack.player !== owner).reduce((sum, attack) => sum + attack.actual, 0);
+      if (total >= 2) {
+        engineHeal(room, owner, owner.participantId, 2, item.id, healReduction, modifiers, 'SHOP_HEAL', false, { shopItemId: item.id });
+        event(room, 'SHOP_EFFECT_APPLIED', { participantId: owner.participantId, itemId: item.id, effect: 'DIRECT_DAMAGE_THRESHOLD_HEAL', damageTaken: total });
+      } else {
+        use.shopEffectFailed = true;
+        event(room, 'SHOP_EFFECT_FAILED', { participantId: owner.participantId, itemId: item.id, reason: 'DIRECT_DAMAGE_BELOW_TWO', damageTaken: total });
+      }
     }
   }
 }
@@ -1105,10 +1356,12 @@ function engineCostsMarksAndHistory(room, usages) {
     use.player.turnStartDeadState = false;
     use.player.confirmed = false;
     const updatedMark = use.player.cardMarks[use.card.id] || {};
-    const history = { id: id(), participantId: use.player.participantId, cardId: use.card.id, stationId: currentStation(room).id, stationIndex: room.stationIndex, stationTurn: room.stationTurn, globalTurnIndex: room.globalTurnIndex, result: use.outcome, finalTarget: use.targetId, normalCooldownStartsAt: room.globalTurnIndex + 1, cooldownExtensionUntil: updatedMark.cooldownExtensionUntil || null, ctBypass: use.ctBypass || null };
+    const normalCooldownStartsAt = use.skipNormalCooldown ? null : room.globalTurnIndex + 1;
+    const history = { id: id(), participantId: use.player.participantId, cardId: use.card.id, stationId: currentStation(room).id, stationIndex: room.stationIndex, stationTurn: room.stationTurn, globalTurnIndex: room.globalTurnIndex, result: use.outcome, finalTarget: use.targetId, normalCooldownStartsAt, cooldownExtensionUntil: updatedMark.cooldownExtensionUntil || null, ctBypass: use.ctBypass || null };
     use.player.cardUsage.push(history);
     event(room, 'CARD_USAGE_RECORDED', history, `private:${use.player.participantId}`);
-    event(room, 'COOLDOWN_STARTED', { participantId: use.player.participantId, cardId: use.card.id, unavailableTurn: room.globalTurnIndex + 1 }, `private:${use.player.participantId}`);
+    if (normalCooldownStartsAt) event(room, 'COOLDOWN_STARTED', { participantId: use.player.participantId, cardId: use.card.id, unavailableTurn: normalCooldownStartsAt }, `private:${use.player.participantId}`);
+    else event(room, 'COOLDOWN_SKIPPED', { participantId: use.player.participantId, cardId: use.card.id, reason: 'INFINITE_SLIP' }, `private:${use.player.participantId}`);
   }
 }
 function resolveTurn(room) {
@@ -1116,9 +1369,11 @@ function resolveTurn(room) {
   const modifiers = engineModifiers(room);
   const usages = room.players.map(player => {
     const card = CARD_BY_ID[player.selection.cardId];
-    return { player, card, effect: card.effect, ...player.selection, invalidated: false, attackInvalidated: false, outcome: 'RESOLVED', basicActual: 0 };
+    const shop = selectedShopEntry(room, player, player.selection);
+    return { player, card, effect: card.effect, ...player.selection, shopEntry: shop?.entry || null, shopItem: shop?.item || null, invalidated: false, attackInvalidated: false, outcome: 'RESOLVED', basicActual: 0 };
   });
   event(room, 'CARDS_REVEALED', { usages: usages.map(publicUsage), stationEffects: modifiers.effectIds });
+  engineStartShopUses(room, usages);
   event(room, 'ENGINE_PHASE', { step: 1, name: 'COPY_EXPANSION' });
   engineExpandEncore(room, usages);
   event(room, 'ENGINE_PHASE', { step: 2, name: 'TARGET_CHANGE' });
@@ -1138,14 +1393,14 @@ function resolveTurn(room) {
   event(room, 'ENGINE_PHASE', { step: 12, name: 'NUMERIC_DEFENSE_ASSIGNMENT' });
   engineAllocateReduction(room, defenses, basicAttacks, 'basic');
   event(room, 'ENGINE_PHASE', { step: 13, name: 'BASIC_DAMAGE_EVENTS' });
-  engineResolveAttackEvents(room, basicAttacks);
+  engineResolveAttackEvents(room, basicAttacks, defenses);
   event(room, 'ENGINE_PHASE', { step: 14, name: 'CONDITIONAL_ADDITIONAL_ATTACKS' });
   const additionalAttacks = engineAdditionalAttacks(room, basicAttacks, modifiers, focusCounts);
   event(room, 'ENGINE_PHASE', { step: 16, name: 'REMAINING_DEFENSE_ON_ADDITIONALS' });
   engineAssignCompleteDefenses(room, defenses, additionalAttacks, 'additional');
   engineAllocateReduction(room, defenses, additionalAttacks, 'additional');
   event(room, 'ENGINE_PHASE', { step: 17, name: 'ADDITIONAL_DAMAGE_EVENTS' });
-  engineResolveAttackEvents(room, additionalAttacks);
+  engineResolveAttackEvents(room, additionalAttacks, defenses);
   const attacks = [...basicAttacks, ...additionalAttacks];
   engineApplyOnHitStates(room, attacks);
   event(room, 'ENGINE_PHASE', { step: 18, name: 'STATION_DAMAGE' });
@@ -1156,6 +1411,7 @@ function resolveTurn(room) {
   engineRecovery(room, usages, attacks, snapshot, healReduction, modifiers);
   event(room, 'ENGINE_PHASE', { step: 21, name: 'SELF_COSTS' });
   engineCostsMarksAndHistory(room, usages);
+  engineShopPostEffects(room, usages, attacks, healReduction, modifiers);
   room.revealedUsages = usages.map(use => ({ ...publicUsage(use), invalidated: use.invalidated || use.attackInvalidated, result: use.outcome }));
   room.phase = PHASE.TURN_RESULT;
   event(room, 'TURN_RESOLVED', { stationTurn: room.stationTurn, globalTurnIndex: room.globalTurnIndex, stationEffects: modifiers.effectIds });
@@ -1204,6 +1460,7 @@ function finishStation(room) {
     specialBonus: specialConfig ? { id: specialConfig.id, condition: specialConfig.condition, amount: noCurrencyRewards ? 0 : specialConfig.amount, winnerIds: specialAwardees.map(player => player.participantId) } : null,
     rewardSummary
   };
+  room.stationResults.push(room.stationResult);
   room.phase = PHASE.STATION_RESULT;
   room.timer = null;
   event(room, 'STATION_RESULT_CONFIRMED', { stationId: room.stationResult.stationId, rankings });
@@ -1416,7 +1673,7 @@ function purchaseShopItem(room, player, itemId, requestedPayment) {
   const isFirstPurchase = isPrimeChange && !room.firstPurchaseCompleted;
   for (const type of Object.keys(CURRENCY_VALUES)) player.currency[type] -= payment[type];
   for (const type of Object.keys(CURRENCY_VALUES)) player.currency[type] += change.coins[type];
-  player.shopInventory.push({ itemId: item.id, transactionId, used: false, acquiredAt: now() });
+  player.shopInventory.push({ inventoryId: id(), itemId: item.id, transactionId, ownerPlayerId: player.participantId, purchased: true, lastUsedGlobalTurnIndex: null, cooldownUntilGlobalTurnIndex: null, totalUseCount: 0, acquiredAt: now() });
   room.shopStock[item.id] -= 1;
   const transaction = { id: transactionId, participantId: player.participantId, playerNumber: player.playerNumber, itemId: item.id, payment, paymentTotal, change, currencyCocofoliaApplied: false, createdAt: now() };
   room.purchaseTransactions.push(transaction);
@@ -1583,7 +1840,7 @@ export function projectState(room, actor) {
     purchaseTransactions: isGm ? room.purchaseTransactions.map(transaction => ({ ...transaction, playerName: room.players.find(player => player.participantId === transaction.participantId)?.name, itemName: SHOP_ITEM_BY_ID[transaction.itemId]?.name })) : undefined,
     transferRequests: visibleTransfers,
     pendingCurrencyTransactions: isGm ? room.currencyTransactions.filter(transaction => !transaction.cocofoliaApplied) : undefined,
-    revealedUsages: room.phase === PHASE.TURN_RESULT ? room.revealedUsages.map(use => { const card = CARDS.find(item => item.id === use.cardId); return { ...use, cardName: card?.name, category: card?.category, description: card?.description }; }) : [], events: publicEvents
+    revealedUsages: room.phase === PHASE.TURN_RESULT ? room.revealedUsages.map(use => { const card = CARDS.find(item => item.id === use.cardId); const shopItem = SHOP_ITEM_BY_ID[use.shopItemId]; return { ...use, cardName: card?.name, category: card?.category, description: card?.description, shopItemName: shopItem?.name || null, shopItemEffect: shopItem?.effect || null }; }) : [], events: publicEvents
   };
 }
 
@@ -1591,13 +1848,84 @@ function privatePlayer(player, room) {
   const cards = CARDS.filter(card => card.packId === player.packId).map(card => {
     const status = cooldownStatus(room, player, card.id);
     const mark = player.cardMarks[card.id] || {};
+    const shopKeyAvailable = player.shopInventory.some(entry => SHOP_ITEM_BY_ID[entry.itemId]?.effectType === 'NORMAL_CT_BYPASS' && !shopCooldownStatus(room, entry).code && !currentImmediateShopUse(room, player));
     const bypassOptions = status.code === 'NORMAL' ? [
       ...(mark.desireReuseAt === room.globalTurnIndex ? ['DESIRE'] : []),
       ...(mark.greedyTicketReuseAt === room.globalTurnIndex ? ['GREEDY_TICKET'] : []),
-      ...(stationModifiers(room).normalCooldownReuse && !player.hungerReuseUsed ? ['HUNGER'] : [])
+      ...(stationModifiers(room).normalCooldownReuse && !player.hungerReuseUsed ? ['HUNGER'] : []),
+      ...(shopKeyAvailable ? ['HELL_KEY'] : [])
     ] : [];
     return { ...card, unavailableReason: status.code === 'EXTENSION' ? status.reason : card.id === 'encore' && !hasEncoreCandidate(room, player) ? '再演できる使用履歴がありません。' : status.code === 'NORMAL' && !bypassOptions.length ? status.reason : null, cooldownStatus: status.code, bypassOptions };
   });
   const encoreCandidates = player.cardUsage.filter(use => use.stationIndex <= room.stationIndex - 3 && ['attack', 'defense', 'heal'].includes(CARD_BY_ID[use.cardId]?.effect?.kind)).map(use => ({ id: use.id, cardId: use.cardId, cardName: CARD_BY_ID[use.cardId]?.name, kind: CARD_BY_ID[use.cardId]?.effect?.kind }));
-  return { participantId: player.participantId, role: 'PL', playerNumber: player.playerNumber, name: player.name, hp: player.hp, packId: player.packId, cards, cardMarks: player.cardMarks, ongoingEffects: player.ongoingEffects, encoreCandidates, hungerReuseUsed: player.hungerReuseUsed, currency: player.currency, shopInventory: player.shopInventory.map(entry => ({ ...entry, item: SHOP_ITEM_BY_ID[entry.itemId] })), purchaseTransactions: room.purchaseTransactions.filter(transaction => transaction.participantId === player.participantId).map(transaction => ({ ...transaction, itemName: SHOP_ITEM_BY_ID[transaction.itemId]?.name })), purchaseNotice: player.purchaseNotice };
+  return { participantId: player.participantId, role: 'PL', playerNumber: player.playerNumber, name: player.name, hp: player.hp, packId: player.packId, cards, cardMarks: player.cardMarks, ongoingEffects: player.ongoingEffects, encoreCandidates, hungerReuseUsed: player.hungerReuseUsed, currency: player.currency, shopInventory: player.shopInventory.map(entry => ({ ...entry, item: SHOP_ITEM_BY_ID[entry.itemId], cooldownStatus: shopCooldownStatus(room, entry).code, unavailableReason: shopCooldownStatus(room, entry).reason })), immediateShopUse: currentImmediateShopUse(room, player), infoShopResults: player.infoShopResults.slice(-10), purchaseTransactions: room.purchaseTransactions.filter(transaction => transaction.participantId === player.participantId).map(transaction => ({ ...transaction, itemName: SHOP_ITEM_BY_ID[transaction.itemId]?.name })), purchaseNotice: player.purchaseNotice };
+}
+
+// バランス検証・シミュレーション専用の集計。PL向けAPIには含めない。
+export function collectSimulationMetrics(room) {
+  ensureRoomState(room);
+  const events = room.events || [];
+  const stationResults = room.stationResults || [];
+  const sum = values => values.reduce((total, value) => total + Number(value || 0), 0);
+  const coinValue = coins => Object.entries(CURRENCY_VALUES).reduce((total, [type, value]) => total + Number(coins?.[type] || 0) * value, 0);
+  const metricsByPlayer = room.players.map(player => {
+    const rankings = stationResults.map(result => result.rankings?.find(entry => entry.participantId === player.participantId)?.rank).filter(Number.isFinite);
+    const zeroEvents = events.filter(event => event.type === 'HP_ZERO_REACHED' && event.payload?.participantId === player.participantId);
+    const shopUsage = events.filter(event => event.type === 'SHOP_USED' && event.payload?.participantId === player.participantId).map(event => ({ itemId: event.payload.itemId, globalTurnIndex: event.payload.globalTurnIndex, useCount: event.payload.useCount, timing: event.payload.timing }));
+    const purchases = room.purchaseTransactions.filter(transaction => transaction.participantId === player.participantId);
+    const generatedChange = Object.fromEntries(Object.keys(CURRENCY_VALUES).map(type => [type, sum(purchases.map(transaction => transaction.change?.coins?.[type]))]));
+    return {
+      participantId: player.participantId,
+      playerNumber: player.playerNumber,
+      name: player.name,
+      packId: player.packId,
+      finalHp: player.hp,
+      hpZeroCount: zeroEvents.length,
+      deadStations: [...new Set(zeroEvents.map(event => event.payload?.stationId).filter(Boolean))],
+      totalDamageDealt: player.totalStats.damageDealt,
+      totalDamageTaken: player.totalStats.damageTaken,
+      totalSupport: player.totalStats.support,
+      stationRanks: rankings,
+      averageStationRank: rankings.length ? sum(rankings) / rankings.length : null,
+      specialConditionCount: stationResults.filter(result => result.specialBonus?.winnerIds?.includes(player.participantId)).length,
+      sevenCardUsage: player.cardUsage.map(usage => ({ cardId: usage.cardId, stationId: usage.stationId, stationTurn: usage.stationTurn, globalTurnIndex: usage.globalTurnIndex, result: usage.result, finalTarget: usage.finalTarget })),
+      shopUsage,
+      currency: {
+        earnedOne: sum(room.currencyTransactions.filter(transaction => transaction.participantId === player.participantId && transaction.currency === 'one').map(transaction => transaction.amount)),
+        paymentValue: sum(purchases.map(transaction => transaction.paymentTotal ?? coinValue(transaction.payment))),
+        changeGenerated: generatedChange,
+        finalHoldings: { ...player.currency }
+      }
+    };
+  });
+  const shops = SHOP_ITEMS.map(item => {
+    const itemEvents = events.filter(event => event.payload?.itemId === item.id);
+    const reactionReduction = sum(itemEvents.filter(event => event.type === 'SHOP_EFFECT_APPLIED' && ['FIRST_REACTION_ZERO', 'REACTION_REDUCTION'].includes(event.payload.effect)).map(event => event.payload.prevented));
+    return {
+      itemId: item.id,
+      name: item.name,
+      purchaseCount: room.purchaseTransactions.filter(transaction => transaction.itemId === item.id).length,
+      useCount: itemEvents.filter(event => event.type === 'SHOP_USED').length,
+      appliedCount: itemEvents.filter(event => event.type === 'SHOP_EFFECT_APPLIED').length,
+      failedCount: itemEvents.filter(event => event.type === 'SHOP_EFFECT_FAILED').length,
+      directDamageIncrease: item.effectType === 'ATTACK_BONUS' ? sum(events.filter(event => event.type === 'DIRECT_DAMAGE' && event.payload?.component === 'SHOP_ATTACK_BONUS').map(event => event.payload.amount)) : 0,
+      directDamageFromShop: sum(itemEvents.filter(event => event.type === 'SHOP_DAMAGE').map(event => event.payload.amount)),
+      actualReduction: sum(events.filter(event => event.type === 'DEFENSE_APPLIED' && event.payload?.cardId === item.id).map(event => event.payload.amount)) + reactionReduction,
+      actualRecovery: sum(events.filter(event => event.type === 'HEAL' && event.payload?.shopItemId === item.id).map(event => event.payload.shopRecoveryAmount)),
+      informationUseCount: itemEvents.filter(event => event.type === 'SHOP_USED' && event.payload.timing === 'INFO').length
+    };
+  });
+  const packs = PACKS.map(pack => {
+    const players = metricsByPlayer.filter(player => player.packId === pack.id);
+    const ranks = players.flatMap(player => player.stationRanks);
+    return {
+      packId: pack.id,
+      name: pack.name,
+      totalDamageDealt: sum(players.map(player => player.totalDamageDealt)),
+      totalSupport: sum(players.map(player => player.totalSupport)),
+      averageStationRank: ranks.length ? sum(ranks) / ranks.length : null,
+      hpZeroRate: players.length ? players.filter(player => player.hpZeroCount > 0).length / players.length : null
+    };
+  });
+  return { players: metricsByPlayer, packs, shops, stationResults };
 }
