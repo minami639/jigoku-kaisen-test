@@ -1,7 +1,8 @@
 import crypto from 'node:crypto';
 import { CARDS, CARD_BY_ID, PACKS, PACK_BY_ID, SHOP_ITEMS, SHOP_ITEM_BY_ID, STATIONS } from './definitions.js';
+import { stationIntroductionFor } from './station-introductions.js';
 
-export const PHASE = Object.freeze({ LOBBY: 'LOBBY', INTRODUCTION: 'INTRODUCTION', SELF_INTRODUCTION: 'SELF_INTRODUCTION', PACK_SELECTION: 'PACK_SELECTION', TURN_SELECTION: 'TURN_SELECTION', TURN_RESULT: 'TURN_RESULT', STATION_RESULT: 'STATION_RESULT', FREE_TIME: 'FREE_TIME' });
+export const PHASE = Object.freeze({ LOBBY: 'LOBBY', INTRODUCTION: 'INTRODUCTION', SELF_INTRODUCTION: 'SELF_INTRODUCTION', PACK_SELECTION: 'PACK_SELECTION', TURN_SELECTION: 'TURN_SELECTION', TURN_RESULT: 'TURN_RESULT', STATION_RESULT: 'STATION_RESULT', FREE_TIME: 'FREE_TIME', STATION_INTRODUCTION: 'STATION_INTRODUCTION' });
 const token = () => crypto.randomBytes(24).toString('base64url');
 const id = () => crypto.randomUUID();
 const now = () => new Date().toISOString();
@@ -65,6 +66,7 @@ function ensureRoomState(room) {
   room.transferRequests ||= [];
   room.currencyTransactions ||= [];
   room.firstPurchaseCompleted ||= false;
+  room.stationIntroductionStep ||= 0;
   for (const player of room.players) {
     player.shopInventory ||= [];
     player.purchaseNotice ||= null;
@@ -196,6 +198,10 @@ export function applyAction(room, actor, action) {
       if (room.phase !== PHASE.FREE_TIME || room.stationIndex !== 0) throw new Error('第一地獄の自由時間中ではありません');
       startNextStation(room);
       break;
+    case 'ADVANCE_STATION_INTRODUCTION':
+      requireGm(actor);
+      advanceStationIntroduction(room);
+      break;
     case 'MARK_PURCHASE_APPLIED': {
       requireGm(actor);
       const transaction = room.purchaseTransactions.find(item => item.id === action.transactionId);
@@ -315,7 +321,7 @@ export function applyAction(room, actor, action) {
 
 function jumpTestPhase(room, action) {
   const destination = String(action.phase || '');
-  if (![PHASE.INTRODUCTION, PHASE.SELF_INTRODUCTION, PHASE.PACK_SELECTION, PHASE.TURN_SELECTION, PHASE.TURN_RESULT, PHASE.FREE_TIME].includes(destination)) throw new Error('移動先フェーズが不正です');
+  if (![PHASE.INTRODUCTION, PHASE.SELF_INTRODUCTION, PHASE.PACK_SELECTION, PHASE.TURN_SELECTION, PHASE.TURN_RESULT, PHASE.FREE_TIME, PHASE.STATION_INTRODUCTION].includes(destination)) throw new Error('移動先フェーズが不正です');
   room.revealedUsages = [];
   for (const player of room.players) { player.selection = null; player.confirmed = false; }
 
@@ -330,10 +336,11 @@ function jumpTestPhase(room, action) {
     const stationIndex = Number(action.stationIndex);
     const station = STATIONS[stationIndex];
     const stationTurn = Number(action.stationTurn);
-    if (!station || (destination === PHASE.FREE_TIME ? stationIndex >= STATIONS.length - 1 : (!Number.isInteger(stationTurn) || stationTurn < 1 || stationTurn > station.turnCount))) throw new Error('駅またはターンが不正です');
+    if (!station || (destination === PHASE.FREE_TIME ? stationIndex >= STATIONS.length - 1 : destination === PHASE.STATION_INTRODUCTION ? !stationIntroductionFor(station.id) : (!Number.isInteger(stationTurn) || stationTurn < 1 || stationTurn > station.turnCount))) throw new Error('駅またはターンが不正です');
     ensureTestPacks(room);
-    room.phase = destination; room.stationIndex = stationIndex; room.stationTurn = destination === PHASE.FREE_TIME ? station.turnCount : stationTurn;
-    room.globalTurnIndex = STATIONS.slice(0, stationIndex).reduce((sum, item) => sum + item.turnCount, 0) + (destination === PHASE.FREE_TIME ? station.turnCount : stationTurn);
+    room.phase = destination; room.stationIndex = stationIndex; room.stationTurn = destination === PHASE.FREE_TIME ? station.turnCount : destination === PHASE.STATION_INTRODUCTION ? 0 : stationTurn;
+    room.globalTurnIndex = STATIONS.slice(0, stationIndex).reduce((sum, item) => sum + item.turnCount, 0) + (destination === PHASE.FREE_TIME ? station.turnCount : destination === PHASE.STATION_INTRODUCTION ? 0 : stationTurn);
+    room.stationIntroductionStep = destination === PHASE.STATION_INTRODUCTION ? 1 : 0;
     room.timer = destination === PHASE.TURN_SELECTION ? { startedAt: Date.now(), endsAt: Date.now() + station.turnSeconds * 1000 } : destination === PHASE.FREE_TIME ? { startedAt: Date.now(), endsAt: Date.now() + 300_000 } : null;
   }
   event(room, 'TEST_PHASE_JUMPED', { phase: room.phase, stationIndex: room.stationIndex, stationTurn: room.stationTurn }, 'gm');
@@ -572,15 +579,36 @@ function updateTransferStatus(room, transferId, status) {
 }
 
 function startNextStation(room) {
-  room.stationIndex = 1;
+  const nextStationIndex = room.stationIndex + 1;
+  const nextStation = STATIONS[nextStationIndex];
+  if (!nextStation) throw new Error('次の地獄が見つかりません');
+  if (!stationIntroductionFor(nextStation.id)) throw new Error('次の地獄の導入が未設定です');
+  room.stationIndex = nextStationIndex;
+  room.stationTurn = 0;
+  room.phase = PHASE.STATION_INTRODUCTION;
+  room.stationIntroductionStep = 1;
+  room.stationResult = null;
+  room.revealedUsages = [];
+  room.timer = null;
+  room.players.forEach(player => { player.selection = null; player.confirmed = false; player.freeTimeReady = false; player.stationStats = freshStats(); });
+  event(room, 'STATION_INTRODUCTION_STARTED', { stationId: nextStation.id });
+}
+
+function advanceStationIntroduction(room) {
+  if (room.phase !== PHASE.STATION_INTRODUCTION) throw new Error('駅導入中ではありません');
+  const introduction = stationIntroductionFor(STATIONS[room.stationIndex]?.id);
+  if (!introduction) throw new Error('この駅の導入はありません');
+  if (room.stationIntroductionStep < introduction.lines.length) {
+    room.stationIntroductionStep += 1;
+    event(room, 'STATION_INTRODUCTION_ADVANCED', { stationId: STATIONS[room.stationIndex].id, step: room.stationIntroductionStep }, 'gm');
+    return;
+  }
+  room.stationIntroductionStep = 0;
   room.stationTurn = 1;
   room.globalTurnIndex += 1;
   room.phase = PHASE.TURN_SELECTION;
-  room.stationResult = null;
-  room.revealedUsages = [];
-  room.timer = { startedAt: Date.now(), endsAt: Date.now() + STATIONS[1].turnSeconds * 1000 };
-  room.players.forEach(player => { player.selection = null; player.confirmed = false; player.freeTimeReady = false; player.stationStats = freshStats(); });
-  event(room, 'STATION_STARTED', { stationId: STATIONS[1].id, stationTurn: 1, globalTurnIndex: room.globalTurnIndex });
+  room.timer = { startedAt: Date.now(), endsAt: Date.now() + STATIONS[room.stationIndex].turnSeconds * 1000 };
+  event(room, 'STATION_STARTED', { stationId: STATIONS[room.stationIndex].id, stationTurn: 1, globalTurnIndex: room.globalTurnIndex });
 }
 
 function nextTurn(room) {
@@ -599,6 +627,7 @@ function nextTurn(room) {
 export function projectState(room, actor) {
   ensureRoomState(room);
   const isGm = actor.role === 'GM';
+  const stationIntroduction = room.phase === PHASE.STATION_INTRODUCTION ? stationIntroductionFor(STATIONS[room.stationIndex]?.id) : null;
   const visibleTransfers = room.transferRequests.filter(item => isGm || item.senderId === actor.participantId || item.recipientId === actor.participantId).map(item => ({
     ...item,
     currencyLabel: CURRENCY_LABELS[item.currencyType],
@@ -611,6 +640,7 @@ export function projectState(room, actor) {
   return {
     code: room.code, testMode: Boolean(room.testMode), phase: room.phase, station: room.stationIndex >= 0 ? STATIONS[room.stationIndex] : null,
     stationTurn: room.stationTurn, globalTurnIndex: room.globalTurnIndex, timer: room.timer, introductionStep: room.introductionStep || 0,
+    stationIntroduction: stationIntroduction ? { title: stationIntroduction.title, lines: stationIntroduction.lines, step: room.stationIntroductionStep } : null,
     me: actor.role === 'GM' ? { participantId: actor.participantId, role: 'GM', name: actor.name } : privatePlayer(actor, room),
     players: room.players.map(player => ({ participantId: player.participantId, playerNumber: player.playerNumber, name: player.name, hp: player.hp, isDeadState: player.isDeadState, packId: player.packId, confirmed: player.confirmed, selfIntroductionComplete: Boolean(player.selfIntroductionComplete), freeTimeReady: Boolean(player.freeTimeReady), selection: isGm || player.participantId === actor.participantId ? player.selection : undefined })),
     packs: PACKS.map(pack => ({ ...pack, cards: isGm || actor.packId === pack.id ? CARDS.filter(card => card.packId === pack.id) : undefined })), stations: STATIONS,

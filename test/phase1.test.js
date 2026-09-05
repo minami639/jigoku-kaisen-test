@@ -286,9 +286,30 @@ test('free-time readiness never auto-advances and unused shop cards persist into
   room.players.forEach(player => applyAction(room, player, { type: 'SET_FREE_TIME_READY', ready: true }));
   assert.equal(room.phase, 'FREE_TIME');
   applyAction(room, room.gm, { type: 'START_NEXT_STATION' });
+  while (room.phase === 'STATION_INTRODUCTION') applyAction(room, room.gm, { type: 'ADVANCE_STATION_INTRODUCTION' });
   assert.equal(room.phase, 'TURN_SELECTION');
   assert.equal(room.stationIndex, 1);
   assert.equal(room.players[0].shopInventory[0].used, false);
+});
+
+test('ice station uses a GM-controlled persistent introduction before its first turn', () => {
+  const room = firstShopRoom();
+  applyAction(room, room.gm, { type: 'START_NEXT_STATION' });
+
+  assert.equal(room.phase, 'STATION_INTRODUCTION');
+  assert.equal(room.stationIndex, 1);
+  assert.equal(room.stationTurn, 0);
+  assert.equal(room.globalTurnIndex, 3);
+  const playerView = projectState(room, room.players[0]);
+  assert.equal(playerView.stationIntroduction.title, '第二地獄へ');
+  assert.match(playerView.stationIntroduction.lines.join('\n'), /極寒/);
+  assert.equal(playerView.stationIntroduction.step, 1);
+  assert.throws(() => applyAction(room, room.players[0], { type: 'ADVANCE_STATION_INTRODUCTION' }), /GM専用/);
+
+  while (room.phase === 'STATION_INTRODUCTION') applyAction(room, room.gm, { type: 'ADVANCE_STATION_INTRODUCTION' });
+  assert.equal(room.phase, 'TURN_SELECTION');
+  assert.equal(room.stationTurn, 1);
+  assert.equal(room.globalTurnIndex, 4);
 });
 
 test('first-shop buyer chooses the one-coin payment amount and receives only the resulting change', () => {
