@@ -9,14 +9,24 @@ export const PACKS = [
 ];
 
 export const STATIONS = [
-  { id: 'scorch', name: '第一・焦熱地獄', turnCount: 3, turnSeconds: 180, effect: '主分類「攻撃」の直接ダメージ＋1' },
-  { id: 'ice', name: '第二・氷結地獄', turnCount: 3, turnSeconds: 180, effect: 'すべての直接ダメージ−1' },
-  { id: 'needle', name: '第三・針山地獄', turnCount: 3, turnSeconds: 180, effect: '集中攻撃成立時、対象へ駅ダメージ1' },
-  { id: 'blood', name: '第四・血の池地獄', turnCount: 3, turnSeconds: 180, effect: '回復・吸収・反撃・反射＋1' },
-  { id: 'hunger', name: '第五・餓鬼地獄', turnCount: 4, turnSeconds: 210, effect: '各PL1回、通常CT中カードを再使用可能' },
-  { id: 'war', name: '第六・修羅地獄', turnCount: 4, turnSeconds: 210, effect: '攻撃・防御・反撃・反射＋1' },
-  { id: 'infinite', name: '第七・無間地獄', turnCount: 5, turnSeconds: 210, effect: '過去6駅から2効果を再演' }
+  { id: 'scorch', name: '第一・焦熱地獄', turnCount: 3, turnSeconds: 180, effect: '主分類「攻撃」の直接ダメージ＋1', effectId: 'scorch' },
+  { id: 'ice', name: '第二・氷結地獄', turnCount: 3, turnSeconds: 180, effect: 'すべての直接ダメージ−1', effectId: 'ice' },
+  { id: 'needle', name: '第三・針山地獄', turnCount: 3, turnSeconds: 180, effect: '集中攻撃成立時、対象へ駅ダメージ1', effectId: 'needle' },
+  { id: 'blood', name: '第四・血の池地獄', turnCount: 3, turnSeconds: 180, effect: '回復・吸収・反撃・反射＋1', effectId: 'blood' },
+  { id: 'hunger', name: '第五・餓鬼地獄', turnCount: 4, turnSeconds: 210, effect: '各PL1回、通常CT中カードを再使用可能', effectId: 'hunger' },
+  { id: 'war', name: '第六・修羅地獄', turnCount: 4, turnSeconds: 210, effect: '攻撃・防御・反撃・反射＋1', effectId: 'war' },
+  { id: 'infinite', name: '第七・無間地獄', turnCount: 5, turnSeconds: 210, effect: '過去6駅から2効果を再演', effectId: 'infinite' }
 ];
+
+// 駅名ではなく、処理パイプラインが参照する効果定義。
+export const STATION_EFFECTS = {
+  scorch: { id: 'scorch', attackBonus: 1, scorchCostAt: 4 },
+  ice: { id: 'ice', directDamagePenalty: 1 },
+  needle: { id: 'needle', concentrationDamage: 1 },
+  blood: { id: 'blood', healBonus: 1, absorbBonus: 1, reactionBonus: 1 },
+  hunger: { id: 'hunger', normalCooldownReuse: true },
+  war: { id: 'war', attackBonus: 1, defenseBonus: 1, reactionBonus: 1 }
+};
 
 const cards = [
   ['flame-strike','scorch','炎撃','attack','player',2,'対象HP−2。公開時に自分HP7以下なら−3。'],
@@ -56,8 +66,47 @@ const cards = [
   ['encore','infinite','再演','support','player',0,'3駅以上前の基本数値効果1つを最大2でコピー。']
 ];
 
+// 基本数値とコンポーネントはカードエンジンが共通で処理する。
+export const CARD_EFFECTS = {
+  'flame-strike': { kind: 'attack', baseDamage: 2, condition: 'ownerHpAtMost7', conditionDamage: 1 },
+  immolation: { kind: 'attack', baseDamage: 3, condition: 'ownerHpLessThanTarget', conditionDamage: 1, selfCost: 1 },
+  'flame-wall': { kind: 'defense', reduction: 2 },
+  'fire-seed': { kind: 'cardAttackBoost', amount: 1, selfCost: 1 },
+  embers: { kind: 'markEmbers' },
+  'ice-spear': { kind: 'attack', baseDamage: 1, onHitState: { stackKey: 'ATTACK_DAMAGE_DOWN', value: 1 } },
+  freeze: { kind: 'carryState', state: { stackKey: 'ATTACK_DAMAGE_DOWN', value: 2 } },
+  blizzard: { kind: 'targetChange' },
+  'ice-wall': { kind: 'defense', reduction: 2 },
+  thaw: { kind: 'defenseAndRemoveState', reduction: 1 },
+  'follow-needle': { kind: 'attack', baseDamage: 2, condition: 'samePreviousStationTarget', conditionDamage: 1 },
+  'thousand-needles': { kind: 'attack', baseDamage: 1, condition: 'needleConcentration', conditionExtraDamage: 2 },
+  'poison-needle': { kind: 'attack', baseDamage: 1, onHitState: { stackKey: 'POISON', value: 1, startOfStationDamage: 1 } },
+  'needle-guard': { kind: 'needleDefense', reduction: 1, concentrationReduction: 3 },
+  'target-stitch': { kind: 'focusAttackBoost', amount: 1, maxTargets: 2 },
+  vampire: { kind: 'attack', baseDamage: 2, absorb: 1 },
+  'blood-murk': { kind: 'healReduction', reduction: 2 },
+  'blood-shield': { kind: 'bloodShield', reduction: 2, reflection: 1 },
+  'healing-blood': { kind: 'heal', amount: 2 },
+  transfusion: { kind: 'heal', amount: 3, selfCost: 1 },
+  gluttony: { kind: 'attack', baseDamage: 2, absorb: 1, condition: 'targetHpGreaterThanOwner' },
+  plunder: { kind: 'cooldownExtension', turns: 2 },
+  'leftover-shield': { kind: 'defense', reduction: 2 },
+  alms: { kind: 'heal', amount: 2, condition: 'targetHpZero', conditionHeal: 1 },
+  greed: { kind: 'markDesire' },
+  'heavy-slash': { kind: 'attack', baseDamage: 2, condition: 'targetHasNoDefense', conditionDamage: 1 },
+  desperation: { kind: 'attack', baseDamage: 3, condition: 'ownerDamagedByOtherBasicAttack', conditionExtraDamage: 1, selfCost: 1 },
+  guard: { kind: 'defense', reduction: 2 },
+  'counter-stance': { kind: 'counterStance', damage: 2 },
+  morale: { kind: 'cardNumericBoost', amount: 1 },
+  severance: { kind: 'attack', baseDamage: 2, ignoresDefense: true },
+  nullify: { kind: 'nullify' },
+  reversal: { kind: 'reversal' },
+  regression: { kind: 'healAndRemoveState', amount: 2 },
+  encore: { kind: 'encore' }
+};
+
 export const CARDS = cards.map(([id, packId, name, category, targetType, damage, description]) => ({
-  id, packId, name, category, targetType, damage, description
+  id, packId, name, category, targetType, damage, description, effect: CARD_EFFECTS[id]
 }));
 
 export const CARD_BY_ID = Object.fromEntries(CARDS.map(card => [card.id, card]));
