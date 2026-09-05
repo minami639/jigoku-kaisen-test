@@ -206,6 +206,16 @@ export function applyAction(room, actor, action) {
       if (!room.testMode) throw new Error('テストルーム専用操作です');
       jumpTestPhase(room, action);
       break;
+    case 'TEST_PLAYER_ACTION': {
+      requireGm(actor);
+      if (!room.testMode) throw new Error('テストルーム専用操作です');
+      if (!['SELECT_CARD', 'CONFIRM_CARD'].includes(action.playerAction?.type)) throw new Error('許可されていないテスト操作です');
+      const player = room.players.find(item => item.participantId === action.participantId);
+      if (!player) throw new Error('対象PLが見つかりません');
+      applyAction(room, player, action.playerAction);
+      event(room, 'TEST_PLAYER_ACTION_APPLIED', { participantId: player.participantId, actionType: action.playerAction.type }, 'gm');
+      break;
+    }
     default: throw new Error('未対応の操作です');
   }
   room.updatedAt = now();

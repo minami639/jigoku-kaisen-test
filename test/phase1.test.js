@@ -168,3 +168,15 @@ test('test GM can jump freely between phases and station turns', () => {
   const normalRoom = createRoom();
   assert.throws(() => applyAction(normalRoom, normalRoom.gm, { type: 'TEST_JUMP_PHASE', phase: 'INTRODUCTION' }), /テストルーム専用/);
 });
+
+test('test GM can operate one PL card flow without changing normal permissions', () => {
+  const room = createTestRoom();
+  applyAction(room, room.gm, { type: 'TEST_JUMP_PHASE', phase: 'TURN_SELECTION', stationIndex: 0, stationTurn: 1 });
+  const player = room.players[0];
+  const target = room.players[1];
+  applyAction(room, room.gm, { type: 'TEST_PLAYER_ACTION', participantId: player.participantId, playerAction: { type: 'SELECT_CARD', cardId: 'flame-strike', targetId: target.participantId } });
+  assert.equal(player.selection.cardId, 'flame-strike');
+  applyAction(room, room.gm, { type: 'TEST_PLAYER_ACTION', participantId: player.participantId, playerAction: { type: 'CONFIRM_CARD' } });
+  assert.equal(player.confirmed, true);
+  assert.throws(() => applyAction(room, room.gm, { type: 'TEST_PLAYER_ACTION', participantId: player.participantId, playerAction: { type: 'ADJUST_HP' } }), /許可されていない/);
+});
