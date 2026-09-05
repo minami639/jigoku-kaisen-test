@@ -231,7 +231,7 @@ export function applyAction(room, actor, action) {
       break;
     case 'BUY_SHOP_ITEM':
       requirePlayer(actor);
-      purchaseShopItem(room, actor, action.itemId, action.paymentAmount);
+      purchaseShopItem(room, actor, action.itemId, action.payment);
       break;
     case 'CREATE_TRANSFER_REQUEST':
       requirePlayer(actor);
@@ -1292,6 +1292,36 @@ function advanceFreeTimeIntroduction(room) {
   event(room, 'FREE_TIME_STARTED', { stationId: STATIONS[room.stationIndex].id, seconds: 300 });
 }
 
+const CURRENCY_VALUES = Object.freeze({ one: 1, two: 2, three: 3, five: 5, seven: 7 });
+const CHANGE_ORDER = Object.freeze(['seven', 'five', 'three', 'two', 'one']);
+
+function normalizeShopPayment(payment) {
+  if (!payment || typeof payment !== 'object' || Array.isArray(payment)) throw new Error('投入する冥貨と枚数を指定してください');
+  return Object.fromEntries(Object.keys(CURRENCY_VALUES).map(type => {
+    const amount = Number(payment[type] || 0);
+    if (!Number.isInteger(amount) || amount < 0) throw new Error('投入枚数は0枚以上の整数で指定してください');
+    return [type, amount];
+  }));
+}
+
+function currencyValue(coins) {
+  return Object.entries(CURRENCY_VALUES).reduce((total, [type, value]) => total + (coins[type] || 0) * value, 0);
+}
+
+function currencyLabel(coins) {
+  return Object.keys(CURRENCY_VALUES).filter(type => coins[type]).map(type => `${CURRENCY_LABELS[type]}×${coins[type]}`).join('、') || 'なし';
+}
+
+function makeChange(value) {
+  const coins = Object.fromEntries(Object.keys(CURRENCY_VALUES).map(type => [type, 0]));
+  let remaining = value;
+  for (const type of CHANGE_ORDER) {
+    coins[type] = Math.floor(remaining / CURRENCY_VALUES[type]);
+    remaining %= CURRENCY_VALUES[type];
+  }
+  return { coins, total: value, label: currencyLabel(coins) };
+}
+
 function purchaseShopItem(room, player, itemId, requestedPayment) {
   const shop = SHOP_BY_STATION_ID[STATIONS[room.stationIndex]?.id];
   if (room.phase !== PHASE.FREE_TIME || !shop) throw new Error('この自由時間ではショップを利用できません');
@@ -1299,22 +1329,25 @@ function purchaseShopItem(room, player, itemId, requestedPayment) {
   const item = SHOP_ITEM_BY_ID[itemId];
   if (!item || item.shop !== shop.id) throw new Error('現在のショップの商品ではありません');
   if ((room.shopStock[item.id] || 0) < 1) throw new Error('他のプレイヤーが先に購入しました');
-  const paymentAmount = Number(requestedPayment);
-  if (paymentAmount !== shop.deposit) throw new Error(`このショップでは壱×${shop.deposit}を投入します`);
-  if (player.currency.one < shop.deposit) throw new Error(`壱の冥貨があと${shop.deposit - player.currency.one}枚必要です`);
-  const change = item.change;
+  const payment = normalizeShopPayment(requestedPayment);
+  const paymentTotal = currencyValue(payment);
+  if (paymentTotal < item.price) throw new Error(`投入額があと${item.price - paymentTotal}不足しています`);
+  for (const type of Object.keys(CURRENCY_VALUES)) {
+    if (payment[type] > player.currency[type]) throw new Error(`${CURRENCY_LABELS[type]}の冥貨があと${payment[type] - player.currency[type]}枚必要です`);
+  }
+  const change = makeChange(paymentTotal - item.price);
   const transactionId = id();
-  const isPrimeChange = ['two', 'three', 'five', 'seven'].includes(change.type);
+  const isPrimeChange = ['two', 'three', 'five', 'seven'].some(type => change.coins[type] > 0);
   const isFirstPurchase = isPrimeChange && !room.firstPurchaseCompleted;
-  player.currency.one -= shop.deposit;
-  if (change.type) player.currency[change.type] += change.amount;
+  for (const type of Object.keys(CURRENCY_VALUES)) player.currency[type] -= payment[type];
+  for (const type of Object.keys(CURRENCY_VALUES)) player.currency[type] += change.coins[type];
   player.shopInventory.push({ itemId: item.id, transactionId, used: false, acquiredAt: now() });
   room.shopStock[item.id] -= 1;
-  const transaction = { id: transactionId, participantId: player.participantId, playerNumber: player.playerNumber, itemId: item.id, payment: { one: shop.deposit }, change, currencyCocofoliaApplied: false, createdAt: now() };
+  const transaction = { id: transactionId, participantId: player.participantId, playerNumber: player.playerNumber, itemId: item.id, payment, paymentTotal, change, currencyCocofoliaApplied: false, createdAt: now() };
   room.purchaseTransactions.push(transaction);
   if (isPrimeChange) room.firstPurchaseCompleted = true;
   player.purchaseNotice = { transactionId, itemId: item.id, firstPurchase: isFirstPurchase };
-  event(room, 'SHOP_PURCHASE_COMPLETED', { transactionId, itemId: item.id }, `private:${player.participantId}`);
+  event(room, 'SHOP_PURCHASE_COMPLETED', { transactionId, itemId: item.id, payment, change }, `private:${player.participantId}`);
 }
 
 function requireFreeTime(room) {
@@ -1407,8 +1440,7 @@ function shopForRoom(room) {
   return {
     id: definition.id,
     name: definition.name,
-    deposit: definition.deposit,
-    items: SHOP_ITEMS.filter(item => item.shop === definition.id).map(({ change, ...item }) => ({ ...item, soldOut: (room.shopStock[item.id] || 0) < 1 }))
+    items: SHOP_ITEMS.filter(item => item.shop === definition.id).map(item => ({ ...item, soldOut: (room.shopStock[item.id] || 0) < 1 }))
   };
 }
 

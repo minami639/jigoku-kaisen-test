@@ -30,6 +30,8 @@ function completeRewardSyncAndStartFreeTime(room) {
   while (room.phase === 'FREE_TIME_INTRO') applyAction(room, room.gm, { type: 'ADVANCE_FREE_TIME_INTRODUCTION' });
 }
 
+const payment = coins => ({ one: 0, two: 0, three: 0, five: 0, seven: 0, ...coins });
+
 test('definitions contain seven packs, 35 cards and 25 configured turns', () => {
   assert.equal(PACKS.length, 7);
   assert.equal(CARDS.length, 35);
@@ -315,31 +317,33 @@ test('shops expose only the products for the current station free time', () => {
   assert.throws(() => applyAction(room, room.players[0], { type: 'BUY_SHOP_ITEM', itemId: 'will-o-wisp-amulet' }), /自由時間/);
 });
 
-test('first-shop purchases atomically exchange five one coins for item and prime change', () => {
-  const cases = [
-    ['will-o-wisp-amulet', 'two'],
-    ['protective-rosary', 'three'],
-    ['red-bandage', 'two']
-  ];
-  for (const [itemId, changeType] of cases) {
-    const room = firstShopRoom();
-    const player = room.players[0];
-    applyAction(room, player, { type: 'BUY_SHOP_ITEM', itemId, paymentAmount: 5 });
-    assert.equal(player.currency.one, 0);
-    assert.equal(player.currency[changeType], 1);
-    assert.equal(player.shopInventory[0].itemId, itemId);
-    assert.equal(player.shopInventory[0].transactionId, room.purchaseTransactions[0].id);
-    assert.equal(room.shopStock[itemId], 0);
-    assert.equal(room.purchaseTransactions[0].currencyCocofoliaApplied, false);
-  }
+test('first-shop purchases accept chosen coin types and return canonical change atomically', () => {
+  const room = firstShopRoom();
+  const player = room.players[0];
+  player.currency.five = 1;
+  applyAction(room, player, { type: 'BUY_SHOP_ITEM', itemId: 'will-o-wisp-amulet', payment: payment({ five: 1 }) });
+  assert.equal(player.currency.five, 0);
+  assert.equal(player.currency.two, 1);
+  assert.equal(player.shopInventory[0].itemId, 'will-o-wisp-amulet');
+  assert.equal(player.shopInventory[0].transactionId, room.purchaseTransactions[0].id);
+  assert.deepEqual(room.purchaseTransactions[0].payment, payment({ five: 1 }));
+  assert.equal(room.purchaseTransactions[0].change.label, '弐×1');
+  assert.equal(room.shopStock['will-o-wisp-amulet'], 0);
+  assert.equal(room.purchaseTransactions[0].currencyCocofoliaApplied, false);
+
+  const exactRoom = firstShopRoom();
+  exactRoom.players[0].currency.two = 1;
+  applyAction(exactRoom, exactRoom.players[0], { type: 'BUY_SHOP_ITEM', itemId: 'protective-rosary', payment: payment({ two: 1 }) });
+  assert.equal(exactRoom.players[0].currency.two, 0);
+  assert.equal(exactRoom.purchaseTransactions[0].change.total, 0);
 });
 
 test('first shop rejects insufficient funds and resolves stock races without revealing buyer', () => {
   const room = firstShopRoom();
   room.players[0].currency.one = 4;
-  assert.throws(() => applyAction(room, room.players[0], { type: 'BUY_SHOP_ITEM', itemId: 'will-o-wisp-amulet', paymentAmount: 5 }), /あと1枚/);
-  applyAction(room, room.players[1], { type: 'BUY_SHOP_ITEM', itemId: 'will-o-wisp-amulet', paymentAmount: 5 });
-  assert.throws(() => applyAction(room, room.players[2], { type: 'BUY_SHOP_ITEM', itemId: 'will-o-wisp-amulet', paymentAmount: 5 }), /他のプレイヤーが先に購入/);
+  assert.throws(() => applyAction(room, room.players[0], { type: 'BUY_SHOP_ITEM', itemId: 'will-o-wisp-amulet', payment: payment({ one: 2 }) }), /あと1/);
+  applyAction(room, room.players[1], { type: 'BUY_SHOP_ITEM', itemId: 'will-o-wisp-amulet', payment: payment({ one: 3 }) });
+  assert.throws(() => applyAction(room, room.players[2], { type: 'BUY_SHOP_ITEM', itemId: 'will-o-wisp-amulet', payment: payment({ one: 3 }) }), /他のプレイヤーが先に購入/);
   const otherView = projectState(room, room.players[2]);
   assert.equal(otherView.shop.items.find(item => item.id === 'will-o-wisp-amulet').soldOut, true);
   assert.equal(otherView.purchaseTransactions, undefined);
@@ -351,8 +355,9 @@ test('first shop rejects insufficient funds and resolves stock races without rev
 
 test('GM tracks only purchase currency reflection while the shop card remains Web-managed', () => {
   const room = firstShopRoom();
-  applyAction(room, room.players[0], { type: 'BUY_SHOP_ITEM', itemId: 'will-o-wisp-amulet', paymentAmount: 5 });
-  applyAction(room, room.players[1], { type: 'BUY_SHOP_ITEM', itemId: 'protective-rosary', paymentAmount: 5 });
+  room.players[0].currency.five = 1;
+  applyAction(room, room.players[0], { type: 'BUY_SHOP_ITEM', itemId: 'will-o-wisp-amulet', payment: payment({ five: 1 }) });
+  applyAction(room, room.players[1], { type: 'BUY_SHOP_ITEM', itemId: 'protective-rosary', payment: payment({ one: 2 }) });
   assert.equal(room.players[0].purchaseNotice.firstPurchase, true);
   assert.equal(room.players[1].purchaseNotice.firstPurchase, false);
   const gmView = projectState(room, room.gm);
@@ -365,7 +370,7 @@ test('GM tracks only purchase currency reflection while the shop card remains We
 
 test('free-time readiness never auto-advances and unused shop cards persist into ice', () => {
   const room = firstShopRoom();
-  applyAction(room, room.players[0], { type: 'BUY_SHOP_ITEM', itemId: 'red-bandage', paymentAmount: 5 });
+  applyAction(room, room.players[0], { type: 'BUY_SHOP_ITEM', itemId: 'red-bandage', payment: payment({ one: 3 }) });
   room.players.forEach(player => applyAction(room, player, { type: 'SET_FREE_TIME_READY', ready: true }));
   assert.equal(room.phase, 'FREE_TIME');
   applyAction(room, room.gm, { type: 'START_NEXT_STATION' });
@@ -480,27 +485,27 @@ test('Infinite Hell introduction presents Six-Hell Reenactment before its first 
   assert.equal(room.globalTurnIndex, 21);
 });
 
-test('each shop requires its fixed one-coin deposit and grants its defined change', () => {
+test('every shop settles chosen payment coins and returns value-based change', () => {
   const firstRoom = firstShopRoom();
-  assert.throws(() => applyAction(firstRoom, firstRoom.players[0], { type: 'BUY_SHOP_ITEM', itemId: 'will-o-wisp-amulet', paymentAmount: 3 }), /壱×5/);
-  applyAction(firstRoom, firstRoom.players[0], { type: 'BUY_SHOP_ITEM', itemId: 'will-o-wisp-amulet', paymentAmount: 5 });
-  assert.equal(firstRoom.players[0].currency.one, 0);
+  firstRoom.players[0].currency.five = 1;
+  applyAction(firstRoom, firstRoom.players[0], { type: 'BUY_SHOP_ITEM', itemId: 'will-o-wisp-amulet', payment: payment({ five: 1 }) });
+  assert.equal(firstRoom.players[0].currency.five, 0);
   assert.equal(firstRoom.players[0].currency.two, 1);
 
   const secondRoom = createTestRoom();
-  secondRoom.players[0].currency.one = 5;
+  secondRoom.players[0].currency.three = 1;
   applyAction(secondRoom, secondRoom.gm, { type: 'TEST_JUMP_PHASE', phase: 'FREE_TIME', stationIndex: 1, stationTurn: 0 });
-  applyAction(secondRoom, secondRoom.players[0], { type: 'BUY_SHOP_ITEM', itemId: 'hell-key', paymentAmount: 5 });
-  assert.equal(secondRoom.players[0].currency.one, 0);
-  assert.equal(secondRoom.players[0].currency.two, 1);
-  assert.throws(() => applyAction(secondRoom, secondRoom.players[1], { type: 'BUY_SHOP_ITEM', itemId: 'will-o-wisp-amulet', paymentAmount: 5 }), /現在のショップ/);
+  applyAction(secondRoom, secondRoom.players[0], { type: 'BUY_SHOP_ITEM', itemId: 'hell-key', payment: payment({ three: 1 }) });
+  assert.equal(secondRoom.players[0].currency.three, 0);
+  assert.equal(secondRoom.purchaseTransactions[0].change.total, 0);
+  assert.throws(() => applyAction(secondRoom, secondRoom.players[1], { type: 'BUY_SHOP_ITEM', itemId: 'will-o-wisp-amulet', payment: payment({ one: 3 }) }), /現在のショップ/);
 
   const thirdRoom = createTestRoom();
-  thirdRoom.players[0].currency.one = 10;
+  thirdRoom.players[0].currency.seven = 1;
   applyAction(thirdRoom, thirdRoom.gm, { type: 'TEST_JUMP_PHASE', phase: 'FREE_TIME', stationIndex: 2, stationTurn: 0 });
-  applyAction(thirdRoom, thirdRoom.players[0], { type: 'BUY_SHOP_ITEM', itemId: 'bloodstop-charm', paymentAmount: 10 });
-  assert.equal(thirdRoom.players[0].currency.one, 0);
-  assert.equal(thirdRoom.players[0].currency.five, 1);
+  applyAction(thirdRoom, thirdRoom.players[0], { type: 'BUY_SHOP_ITEM', itemId: 'bloodstop-charm', payment: payment({ seven: 1 }) });
+  assert.equal(thirdRoom.players[0].currency.seven, 0);
+  assert.equal(thirdRoom.players[0].currency.two, 1);
 });
 
 test('currency transfer requires GM confirmation and tracks CCF reflection', () => {
@@ -535,7 +540,7 @@ test('third scorch result follows reward narration, Cocofolia sync, and GM-start
   assert.equal(summary.specialBonus, 1);
   assert.equal(summary.totalOne, 5);
   assert.match(room.stationResult.specialBonus.condition, /実ダメージ合計3以上/);
-  assert.throws(() => applyAction(room, room.players[0], { type: 'BUY_SHOP_ITEM', itemId: 'will-o-wisp-amulet', paymentAmount: 5 }), /自由時間/);
+  assert.throws(() => applyAction(room, room.players[0], { type: 'BUY_SHOP_ITEM', itemId: 'will-o-wisp-amulet', payment: payment({ one: 5 }) }), /自由時間/);
   assert.throws(() => applyAction(room, room.gm, { type: 'START_NEXT_STATION' }), /自由時間/);
   applyAction(room, room.gm, { type: 'START_REWARD_NARRATION' });
   assert.equal(room.phase, 'REWARD_NARRATION');
@@ -560,5 +565,5 @@ test('third scorch result follows reward narration, Cocofolia sync, and GM-start
   while (room.phase === 'FREE_TIME_INTRO') applyAction(room, room.gm, { type: 'ADVANCE_FREE_TIME_INTRODUCTION' });
   assert.equal(room.phase, 'FREE_TIME');
   assert.equal(room.timer.endsAt - room.timer.startedAt, 300_000);
-  applyAction(room, room.players[0], { type: 'BUY_SHOP_ITEM', itemId: 'will-o-wisp-amulet', paymentAmount: 5 });
+  applyAction(room, room.players[0], { type: 'BUY_SHOP_ITEM', itemId: 'will-o-wisp-amulet', payment: payment({ one: 5 }) });
 });
