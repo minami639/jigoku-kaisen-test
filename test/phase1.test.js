@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { applyAction, createRoom, createTestRoom, joinRoom, projectState } from '../src/game.js';
-import { PACKS, CARDS, STATIONS, SHOP_ITEMS } from '../src/definitions.js';
+import { PACKS, CARDS, STATIONS, SHOP_DEFINITIONS, SHOP_ITEMS } from '../src/definitions.js';
 
 function completeSelfIntroductions(room) {
   room.players.forEach(player => applyAction(room, player, { type: 'COMPLETE_SELF_INTRODUCTION' }));
@@ -221,10 +221,11 @@ function firstShopRoom() {
   return room;
 }
 
-test('first shop exposes three stock-one products only during first free time', () => {
+test('shops expose only the products for the current station free time', () => {
   const room = firstShopRoom();
   const view = projectState(room, room.players[0]);
-  assert.equal(SHOP_ITEMS.length, 3);
+  assert.equal(SHOP_ITEMS.length, 22);
+  assert.equal(SHOP_DEFINITIONS.length, 6);
   assert.deepEqual(view.shop.items.map(item => [item.name, item.stock, item.soldOut]), [
     ['鬼火のお守り', 1, false], ['護りの数珠', 1, false], ['赤い包帯', 1, false]
   ]);
@@ -353,17 +354,26 @@ test('Blood Hell introduction is available and Blood Tide adds one to real recov
   assert.ok(room.events.some(item => item.type === 'HEAL' && item.payload.cardId === 'healing-blood' && item.payload.amount === 3));
 });
 
-test('first-shop buyer chooses the one-coin payment amount and receives only the resulting change', () => {
-  const exactRoom = firstShopRoom();
-  applyAction(exactRoom, exactRoom.players[0], { type: 'BUY_SHOP_ITEM', itemId: 'will-o-wisp-amulet', paymentAmount: 3 });
-  assert.equal(exactRoom.players[0].currency.one, 2);
-  assert.equal(exactRoom.purchaseTransactions[0].change.amount, 0);
+test('each shop requires its fixed one-coin deposit and grants its defined change', () => {
+  const firstRoom = firstShopRoom();
+  assert.throws(() => applyAction(firstRoom, firstRoom.players[0], { type: 'BUY_SHOP_ITEM', itemId: 'will-o-wisp-amulet', paymentAmount: 3 }), /壱×5/);
+  applyAction(firstRoom, firstRoom.players[0], { type: 'BUY_SHOP_ITEM', itemId: 'will-o-wisp-amulet', paymentAmount: 5 });
+  assert.equal(firstRoom.players[0].currency.one, 0);
+  assert.equal(firstRoom.players[0].currency.two, 1);
 
-  const overpayRoom = firstShopRoom();
-  applyAction(overpayRoom, overpayRoom.players[0], { type: 'BUY_SHOP_ITEM', itemId: 'protective-rosary', paymentAmount: 4 });
-  assert.equal(overpayRoom.players[0].currency.one, 1);
-  assert.equal(overpayRoom.players[0].currency.two, 1);
-  assert.equal(overpayRoom.purchaseTransactions[0].payment.one, 4);
+  const secondRoom = createTestRoom();
+  applyAction(secondRoom, secondRoom.gm, { type: 'TEST_JUMP_PHASE', phase: 'FREE_TIME', stationIndex: 1, stationTurn: 0 });
+  applyAction(secondRoom, secondRoom.players[0], { type: 'BUY_SHOP_ITEM', itemId: 'hell-key', paymentAmount: 5 });
+  assert.equal(secondRoom.players[0].currency.one, 0);
+  assert.equal(secondRoom.players[0].currency.two, 1);
+  assert.throws(() => applyAction(secondRoom, secondRoom.players[1], { type: 'BUY_SHOP_ITEM', itemId: 'will-o-wisp-amulet', paymentAmount: 5 }), /現在のショップ/);
+
+  const thirdRoom = createTestRoom();
+  thirdRoom.players[0].currency.one = 10;
+  applyAction(thirdRoom, thirdRoom.gm, { type: 'TEST_JUMP_PHASE', phase: 'FREE_TIME', stationIndex: 2, stationTurn: 0 });
+  applyAction(thirdRoom, thirdRoom.players[0], { type: 'BUY_SHOP_ITEM', itemId: 'bloodstop-charm', paymentAmount: 10 });
+  assert.equal(thirdRoom.players[0].currency.one, 0);
+  assert.equal(thirdRoom.players[0].currency.five, 1);
 });
 
 test('currency transfer requires GM confirmation and tracks CCF reflection', () => {

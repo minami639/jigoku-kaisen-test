@@ -63,9 +63,39 @@ export const CARDS = cards.map(([id, packId, name, category, targetType, damage,
 export const CARD_BY_ID = Object.fromEntries(CARDS.map(card => [card.id, card]));
 export const PACK_BY_ID = Object.fromEntries(PACKS.map(pack => [pack.id, pack]));
 
+export const SHOP_DEFINITIONS = [
+  { id: 1, stationId: 'scorch', name: '第一ショップ', deposit: 5 },
+  { id: 2, stationId: 'ice', name: '第二ショップ「氷獄売店」', deposit: 5 },
+  { id: 3, stationId: 'needle', name: '第三ショップ「血池売店」', deposit: 10 },
+  { id: 4, stationId: 'blood', name: '第四ショップ「餓鬼商店」', deposit: 10 },
+  { id: 5, stationId: 'hunger', name: '第五ショップ「修羅売店」', deposit: 10 },
+  { id: 6, stationId: 'war', name: '第六ショップ「無間売店」', deposit: 10 }
+];
+
+export const SHOP_BY_STATION_ID = Object.fromEntries(SHOP_DEFINITIONS.map(shop => [shop.stationId, shop]));
+
 export const SHOP_ITEMS = [
-  { id: 'will-o-wisp-amulet', shop: 1, name: '鬼火のお守り', price: 3, payment: { one: 5 }, change: { type: 'two', amount: 1, label: '弐×1' }, effect: '自分が選んだ七獄カードの直接ダメージ＋1。単体直接ダメージ上限4を適用する。', stock: 1 },
-  { id: 'protective-rosary', shop: 1, name: '護りの数珠', price: 2, payment: { one: 5 }, change: { type: 'three', amount: 1, label: '参×1' }, effect: '自分がこの駅で受ける直接ダメージを合計1軽減する。', stock: 1 },
-  { id: 'red-bandage', shop: 1, name: '赤い包帯', price: 3, payment: { one: 5 }, change: { type: 'two', amount: 1, label: '弐×1' }, effect: 'カード処理終了後、自分HP＋1。最大HP15を超えて回復しない。', stock: 1 }
+  { id: 'will-o-wisp-amulet', shop: 1, name: '鬼火のお守り', price: 3, change: { type: 'two', amount: 1, label: '弐×1' }, effect: '自分が選んだ七獄カードの直接ダメージ＋1。上限4。', stock: 1 },
+  { id: 'protective-rosary', shop: 1, name: '護りの数珠', price: 2, change: { type: 'three', amount: 1, label: '参×1' }, effect: '自分がこの駅で受ける直接ダメージを合計1軽減。', stock: 1 },
+  { id: 'red-bandage', shop: 1, name: '赤い包帯', price: 3, change: { type: 'two', amount: 1, label: '弐×1' }, effect: 'カード処理終了後、自分HP＋1。', stock: 1 },
+  { id: 'needle-ward', shop: 2, name: '針除けの護符', price: 3, change: { type: 'two', amount: 1, label: '弐×1' }, effect: '自分がこの駅で受ける直接ダメージを合計1軽減。', stock: 1 },
+  { id: 'decoy-doll', shop: 2, name: '囮人形', price: 2, change: { type: 'three', amount: 1, label: '参×1' }, effect: '自分を対象とした最初の対象変更を無効化。', stock: 1 },
+  { id: 'demon-eye', shop: 2, name: '鬼の眼', price: 3, change: { type: 'two', amount: 1, label: '弐×1' }, effect: '最終確認前、指定PL1人の仮選択カードの主分類を見る。', stock: 1 },
+  { id: 'accomplice-thread', shop: 2, name: '共犯の糸', price: 2, change: { type: 'three', amount: 1, label: '参×1' }, effect: '自分の攻撃対象を指定PL1人へ秘密に通知。', stock: 1 },
+  { id: 'scapegoat-slip', shop: 2, name: '身代わり札', price: 3, change: { type: 'two', amount: 1, label: '弐×1' }, effect: '自分が最初に受ける直接攻撃を2軽減。', stock: 1 },
+  { id: 'grudge-slip', shop: 2, name: '怨返しの札', price: 2, change: { type: 'three', amount: 1, label: '参×1' }, effect: '自分へ直接ダメージを与えた相手1人へHP−1。', stock: 1 },
+  { id: 'hell-key', shop: 2, name: '地獄の鍵', price: 3, change: { type: 'two', amount: 1, label: '弐×1' }, effect: 'そのターン、七獄カード1枚の通常CTを無視。', stock: 1 },
+  { id: 'bloodstop-charm', shop: 3, name: '血止めの護符', price: 5, change: { type: 'five', amount: 1, label: '伍×1' }, effect: 'このターン、自分が受ける反撃・反射ダメージを合計2軽減。', stock: 1 },
+  { id: 'shared-life-cup', shop: 3, name: '共命の杯', price: 7, change: { type: 'three', amount: 1, label: '参×1' }, effect: '自分の七獄カードによる他PLへの回復量＋1。', stock: 1 },
+  { id: 'blood-divination-needle', shop: 3, name: '血占いの針', price: 8, change: { type: 'two', amount: 1, label: '弐×1' }, effect: '指定PLの仮選択カードが攻撃か、それ以外か確認。', stock: 1 },
+  { id: 'leftover-bag', shop: 4, name: '食い残し袋', price: 8, change: { type: 'two', amount: 1, label: '弐×1' }, effect: '完全不発または攻撃部分を無効化された場合、処理終了後HP＋1。', stock: 1 },
+  { id: 'hunger-lock', shop: 4, name: '餓鬼の錠前', price: 7, change: { type: 'three', amount: 1, label: '参×1' }, effect: 'このターン、選択カードは新たなCOOLDOWN_EXTENSIONを受けない。', stock: 1 },
+  { id: 'greedy-ticket', shop: 4, name: '欲張り札', price: 5, change: { type: 'five', amount: 1, label: '伍×1' }, effect: '指定カードの次回使用後に発生する通常CTを1回だけ無視。', stock: 1 },
+  { id: 'war-mask', shop: 5, name: '修羅の面', price: 7, change: { type: 'three', amount: 1, label: '参×1' }, effect: 'このターン、自分が最初に受ける反撃・反射ダメージを0にする。', stock: 1 },
+  { id: 'hell-chain', shop: 5, name: '地獄の鎖', price: 5, change: { type: 'five', amount: 1, label: '伍×1' }, effect: 'このターン、自分の七獄カードの最終対象を変更されなくする。', stock: 1 },
+  { id: 'battle-medicine', shop: 5, name: '戦傷薬', price: 3, change: { type: 'seven', amount: 1, label: '漆×1' }, effect: '他PLから直接実ダメージを合計2以上受けた場合、処理終了後HP＋2。', stock: 1 },
+  { id: 'enma-eye', shop: 6, name: '閻魔の眼', price: 3, change: { type: 'seven', amount: 1, label: '漆×1' }, effect: '最終確認前、指定PL1人の仮選択カード名だけを見る。', stock: 1 },
+  { id: 'six-realms-chain', shop: 6, name: '六道の鎖', price: 5, change: { type: 'five', amount: 1, label: '伍×1' }, effect: 'このターン、自分の七獄カードは対象変更を受けない。', stock: 1 },
+  { id: 'infinite-slip', shop: 6, name: '無間の札', price: 7, change: { type: 'three', amount: 1, label: '参×1' }, effect: '無効で効果を失った場合、その使用による通常CTを発生させない。', stock: 1 }
 ];
 export const SHOP_ITEM_BY_ID = Object.fromEntries(SHOP_ITEMS.map(item => [item.id, item]));

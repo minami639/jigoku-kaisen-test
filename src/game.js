@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { CARDS, CARD_BY_ID, PACKS, PACK_BY_ID, SHOP_ITEMS, SHOP_ITEM_BY_ID, STATIONS } from './definitions.js';
+import { CARDS, CARD_BY_ID, PACKS, PACK_BY_ID, SHOP_BY_STATION_ID, SHOP_ITEMS, SHOP_ITEM_BY_ID, STATIONS } from './definitions.js';
 import { stationIntroductionFor } from './station-introductions.js';
 
 export const PHASE = Object.freeze({ LOBBY: 'LOBBY', INTRODUCTION: 'INTRODUCTION', SELF_INTRODUCTION: 'SELF_INTRODUCTION', PACK_SELECTION: 'PACK_SELECTION', TURN_SELECTION: 'TURN_SELECTION', TURN_RESULT: 'TURN_RESULT', STATION_RESULT: 'STATION_RESULT', FREE_TIME: 'FREE_TIME', STATION_INTRODUCTION: 'STATION_INTRODUCTION' });
@@ -62,6 +62,7 @@ function requirePlayer(actor) { if (actor.role !== 'PL') throw new Error('PL専�
 
 function ensureRoomState(room) {
   room.shopStock ||= Object.fromEntries(SHOP_ITEMS.map(item => [item.id, item.stock]));
+  for (const item of SHOP_ITEMS) room.shopStock[item.id] ??= item.stock;
   room.purchaseTransactions ||= [];
   room.transferRequests ||= [];
   room.currencyTransactions ||= [];
@@ -523,31 +524,25 @@ function finishStation(room) {
 
 const CURRENCY_LABELS = { one: '壱', two: '弐', three: '参', five: '伍', seven: '漆' };
 
-function changeFor(amount) {
-  if (amount === 0) return { type: null, amount: 0, label: 'なし' };
-  const type = ({ 1: 'one', 2: 'two', 3: 'three' })[amount];
-  if (!type) throw new Error('この投入額ではおつりを返せません');
-  return { type, amount: 1, label: `${CURRENCY_LABELS[type]}×1` };
-}
-
 function purchaseShopItem(room, player, itemId, requestedPayment) {
-  if (room.phase !== PHASE.FREE_TIME || room.stationIndex !== 0) throw new Error('第一ショップは第一地獄終了後の自由時間だけ利用できます');
+  const shop = SHOP_BY_STATION_ID[STATIONS[room.stationIndex]?.id];
+  if (room.phase !== PHASE.FREE_TIME || !shop) throw new Error('この自由時間ではショップを利用できません');
   if (!room.timer || Date.now() >= room.timer.endsAt) throw new Error('ショップ購入受付は終了しました');
   const item = SHOP_ITEM_BY_ID[itemId];
-  if (!item || item.shop !== 1) throw new Error('第一ショップの商品ではありません');
+  if (!item || item.shop !== shop.id) throw new Error('現在のショップの商品ではありません');
   if ((room.shopStock[item.id] || 0) < 1) throw new Error('他のプレイヤーが先に購入しました');
   const paymentAmount = Number(requestedPayment);
-  if (!Number.isInteger(paymentAmount) || paymentAmount < item.price || paymentAmount > 5) throw new Error(`投入額は${item.price}～5枚から選択してください`);
-  if (player.currency.one < paymentAmount) throw new Error(`壱の冥貨があと${paymentAmount - player.currency.one}枚必要です`);
-  const change = changeFor(paymentAmount - item.price);
+  if (paymentAmount !== shop.deposit) throw new Error(`このショップでは壱×${shop.deposit}を投入します`);
+  if (player.currency.one < shop.deposit) throw new Error(`壱の冥貨があと${shop.deposit - player.currency.one}枚必要です`);
+  const change = item.change;
   const transactionId = id();
   const isPrimeChange = ['two', 'three', 'five', 'seven'].includes(change.type);
   const isFirstPurchase = isPrimeChange && !room.firstPurchaseCompleted;
-  player.currency.one -= paymentAmount;
+  player.currency.one -= shop.deposit;
   if (change.type) player.currency[change.type] += change.amount;
   player.shopInventory.push({ itemId: item.id, transactionId, used: false, acquiredAt: now() });
   room.shopStock[item.id] -= 1;
-  const transaction = { id: transactionId, participantId: player.participantId, playerNumber: player.playerNumber, itemId: item.id, payment: { one: paymentAmount }, change, currencyCocofoliaApplied: false, createdAt: now() };
+  const transaction = { id: transactionId, participantId: player.participantId, playerNumber: player.playerNumber, itemId: item.id, payment: { one: shop.deposit }, change, currencyCocofoliaApplied: false, createdAt: now() };
   room.purchaseTransactions.push(transaction);
   if (isPrimeChange) room.firstPurchaseCompleted = true;
   player.purchaseNotice = { transactionId, itemId: item.id, firstPurchase: isFirstPurchase };
@@ -634,6 +629,17 @@ function advanceStationIntroduction(room) {
   event(room, 'STATION_STARTED', { stationId: STATIONS[room.stationIndex].id, stationTurn: 1, globalTurnIndex: room.globalTurnIndex });
 }
 
+function shopForRoom(room) {
+  const definition = SHOP_BY_STATION_ID[STATIONS[room.stationIndex]?.id];
+  if (!definition) return { items: [] };
+  return {
+    id: definition.id,
+    name: definition.name,
+    deposit: definition.deposit,
+    items: SHOP_ITEMS.filter(item => item.shop === definition.id).map(({ change, ...item }) => ({ ...item, soldOut: (room.shopStock[item.id] || 0) < 1 }))
+  };
+}
+
 function nextTurn(room) {
   if (room.phase !== PHASE.TURN_RESULT) throw new Error('ターン結果確認中ではありません');
   const station = STATIONS[room.stationIndex];
@@ -669,7 +675,7 @@ export function projectState(room, actor) {
     packs: PACKS.map(pack => ({ ...pack, cards: isGm || actor.packId === pack.id ? CARDS.filter(card => card.packId === pack.id) : undefined })), stations: STATIONS,
     testPlayers: isGm ? room.players.map(player => ({ ...privatePlayer(player, room), selection: player.selection, confirmed: player.confirmed })) : undefined,
     stationResult: room.stationResult,
-    shop: { items: SHOP_ITEMS.filter(item => item.shop === 1).map(({ payment, change, ...item }) => ({ ...item, soldOut: (room.shopStock[item.id] || 0) < 1 })) },
+    shop: shopForRoom(room),
     purchaseTransactions: isGm ? room.purchaseTransactions.map(transaction => ({ ...transaction, playerName: room.players.find(player => player.participantId === transaction.participantId)?.name, itemName: SHOP_ITEM_BY_ID[transaction.itemId]?.name })) : undefined,
     transferRequests: visibleTransfers,
     pendingCurrencyTransactions: isGm ? room.currencyTransactions.filter(transaction => !transaction.cocofoliaApplied) : undefined,
