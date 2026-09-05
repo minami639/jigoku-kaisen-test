@@ -72,3 +72,11 @@
 .brand-name{background:linear-gradient(180deg,#fff1b6 0,#e4bd62 47%,#a96926 100%);-webkit-background-clip:text;background-clip:text;color:transparent}
 .brand-name::before{content:none}
 @media(max-width:720px){.brand-title{gap:8px;padding-bottom:7px;font-size:25px}.brand-route-mark{width:25px;height:25px}.brand-route-mark::before{width:12px;height:15px}.brand-route-mark::after{width:4px;height:4px}.brand-title::after{left:33px;bottom:0}.brand-lockup>.eyebrow{margin-left:34px}}
+
+/* 提供ロゴを正本として表示する */
+.brand-lockup{gap:4px}
+.brand-lockup>.eyebrow{margin:0 0 0 3px}
+.brand-title{display:block;padding:0;line-height:0;text-shadow:none}
+.brand-title::after{content:none}
+.brand-title>img{display:block;width:clamp(200px,34vw,430px);height:auto;filter:drop-shadow(0 8px 14px #000b)}
+@media(max-width:720px){.brand-title{padding:0}.brand-lockup>.eyebrow{margin-left:2px}.brand-title>img{width:clamp(190px,57vw,270px)}}

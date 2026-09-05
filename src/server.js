@@ -46,7 +46,7 @@ function serveStatic(req, res, url) {
   const target = path.resolve(publicRoot, relative);
   if (!target.startsWith(publicRoot) || !fs.existsSync(target) || fs.statSync(target).isDirectory()) return false;
   const ext = path.extname(target);
-  const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8' };
+  const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.png': 'image/png' };
   res.writeHead(200, { 'content-type': types[ext] || 'application/octet-stream' });
   fs.createReadStream(target).pipe(res);
   return true;
