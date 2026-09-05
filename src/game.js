@@ -144,6 +144,22 @@ export function applyAction(room, actor, action) {
       event(room, 'TEST_PACK_ASSIGNED', { participantId: player.participantId, packId: action.packId }, 'gm');
       break;
     }
+    case 'TEST_AUTOFILL_PACKS': {
+      requireGm(actor);
+      if (!room.testMode) throw new Error('テストルーム専用操作です');
+      if (room.phase !== PHASE.PACK_SELECTION) throw new Error('パック選択フェーズではありません');
+      const packs = PACKS.map(pack => pack.id);
+      for (let index = packs.length - 1; index > 0; index -= 1) {
+        const swapIndex = crypto.randomInt(index + 1);
+        [packs[index], packs[swapIndex]] = [packs[swapIndex], packs[index]];
+      }
+      room.players.forEach((player, index) => {
+        player.packId = packs[index];
+        player.confirmed = true;
+      });
+      event(room, 'TEST_PACKS_AUTOFILLED', { assignments: room.players.map(player => ({ playerNumber: player.playerNumber, packId: player.packId })) }, 'gm');
+      break;
+    }
     default: throw new Error('未対応の操作です');
   }
   room.updatedAt = now();

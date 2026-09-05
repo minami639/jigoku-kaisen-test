@@ -103,3 +103,11 @@ test('test-room GM can inspect every PL view without exposing it to PL clients',
   assert.equal(plView.testPlayers, undefined);
   assert.equal(plView.packs.find(pack => pack.id !== room.players[0].packId).cards, undefined);
 });
+
+test('test-room GM can automatically assign all seven packs without duplication', () => {
+  const room = createTestRoom();
+  applyAction(room, room.gm, { type: 'TEST_AUTOFILL_PACKS' });
+  assert.ok(room.players.every(player => player.packId && player.confirmed));
+  assert.equal(new Set(room.players.map(player => player.packId)).size, 7);
+  assert.equal(room.events.at(-1).type, 'TEST_PACKS_AUTOFILLED');
+});
