@@ -56,3 +56,7 @@
 .owned-shop-card.used .owned-shop-card-top em{border-color:#a9a19a66;color:#c3bbb2}
 @media(max-width:800px){.shop-product{min-height:0}.owned-shop-cards{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:430px){.owned-shop-cards{grid-template-columns:1fr}.game-card{min-height:235px}}
+
+/* 導入文は内容量で横幅が変わらない固定の読み上げ枠にする */
+.script,.intro-actions{width:min(780px,calc(100vw - 24px))}
+.gm-progress>.script,.gm-progress>.intro-actions{justify-self:center}
