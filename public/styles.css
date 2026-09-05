@@ -78,5 +78,5 @@
 .brand-lockup>.eyebrow{margin:0 0 0 3px}
 .brand-title{display:block;padding:0;line-height:0;text-shadow:none}
 .brand-title::after{content:none}
-.brand-title>img{display:block;width:clamp(200px,34vw,430px);height:auto;filter:drop-shadow(0 8px 14px #000b)}
-@media(max-width:720px){.brand-title{padding:0}.brand-lockup>.eyebrow{margin-left:2px}.brand-title>img{width:clamp(190px,57vw,270px)}}
+.brand-title>img{display:block;width:clamp(170px,27vw,345px);height:auto;filter:drop-shadow(0 8px 14px #000b)}
+@media(max-width:720px){.brand-title{padding:0}.brand-lockup>.eyebrow{margin-left:2px}.brand-title>img{width:clamp(160px,46vw,220px)}}
