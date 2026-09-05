@@ -872,14 +872,16 @@ function engineAssignCompleteDefenses(room, defenses, attacks, phase) {
     }
   }
 }
-function engineSpendDefense(room, defense, amount, target) {
+function engineSpendDefense(room, defense, amount, target, attack) {
   let remaining = amount;
   for (const contribution of defense.contributions) {
     const applied = Math.min(remaining, contribution.amount);
     if (!applied) continue;
     contribution.amount -= applied;
     remaining -= applied;
-    if (contribution.source !== target) engineSupport(room, contribution.source, applied, { targetId: target.participantId, cardId: defense.use.card.id, reason: contribution.reason || 'DEFENSE' });
+    attack.defenseSources ||= [];
+    attack.defenseSources.push({ source: contribution.source, amount: applied, cardId: defense.use.card.id, reason: contribution.reason || 'DEFENSE' });
+    event(room, 'DEFENSE_ALLOCATED', { sourceId: contribution.source.participantId, targetId: target.participantId, cardId: defense.use.card.id, amount: applied, reason: contribution.reason || 'DEFENSE' });
     if (!remaining) break;
   }
   defense.remaining -= amount;
@@ -894,7 +896,7 @@ function engineAllocateReduction(room, defenses, attacks, phase) {
         for (const defense of entries.filter(item => item.kind === 'numeric' && item.remaining > 0)) {
           const prevented = Math.min(rest, defense.remaining);
           if (!prevented) continue;
-          engineSpendDefense(room, defense, prevented, target);
+          engineSpendDefense(room, defense, prevented, target, attack);
           component.amount -= prevented;
           attack.prevented += prevented;
           rest -= prevented;
@@ -911,6 +913,7 @@ function engineResolveAttackEvents(room, attacks) {
       event(room, 'COMPLETE_DEFENSE', { defenderId: attack.completeDefense.use.player.participantId, targetId: target.participantId, cardId: attack.use.card.id, phase: attack.phase });
       continue;
     }
+    const hpBefore = target.hp;
     for (const component of attack.components) {
       const before = target.hp;
       const actual = Math.min(before, component.amount);
@@ -920,6 +923,13 @@ function engineResolveAttackEvents(room, attacks) {
       recordDamage(component.source, target, actual);
       engineMarkZero(room, target, before);
       event(room, 'DIRECT_DAMAGE', { sourceId: component.source.participantId, attackOwnerId: attack.player.participantId, targetId: target.participantId, cardId: attack.use.card.id, phase: attack.phase, component: component.type, amount: actual, overkill: component.amount - actual });
+    }
+    let actualPrevention = Math.max(0, Math.min(hpBefore, attack.beforeDefense) - attack.actual);
+    for (const defenseSource of attack.defenseSources || []) {
+      const credited = Math.min(actualPrevention, defenseSource.amount);
+      actualPrevention -= credited;
+      if (credited && defenseSource.source !== target) engineSupport(room, defenseSource.source, credited, { targetId: target.participantId, cardId: defenseSource.cardId, reason: defenseSource.reason });
+      if (credited) event(room, 'DEFENSE_APPLIED', { sourceId: defenseSource.source.participantId, targetId: target.participantId, cardId: defenseSource.cardId, amount: credited, reason: defenseSource.reason });
     }
     attack.use.basicActual = (attack.use.basicActual || 0) + attack.actual;
   }

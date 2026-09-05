@@ -179,3 +179,13 @@ test('plunder blocks both the normal cooldown turn and the following extension t
   applyAction(room, room.gm, { type: 'TEST_JUMP_PHASE', phase: 'TURN_SELECTION', stationIndex: 1, stationTurn: 1 });
   assert.doesNotThrow(() => applyAction(room, room.players[0], { type: 'SELECT_CARD', cardId: 'flame-wall', targetId: room.players[1].participantId }));
 });
+
+test('overkill prevented only on paper does not become defense support', () => {
+  const room = roomAt(0);
+  room.players[1].hp = 1;
+  resolve(room, {
+    0: { cardId: 'flame-strike', targetId: room.players[1].participantId },
+    2: { cardId: 'needle-guard', targetId: room.players[1].participantId }
+  });
+  assert.equal(room.players[2].stationStats.support, 0);
+});
