@@ -37,7 +37,7 @@ export function joinRoom(room, name) {
   const playerNumber = room.players.length + 1;
   const player = {
     participantId: id(), authToken: token(), role: 'PL', playerNumber, name: name.trim(), hp: 15,
-    isDeadState: false, packId: null, selection: null, confirmed: false, cardUsage: [], cardMarks: {},
+    isDeadState: false, packId: null, selection: null, confirmed: false, selfIntroductionComplete: false, cardUsage: [], cardMarks: {},
     ongoingEffects: [], currency: { one: 5, two: 0, three: 0, five: 0, seven: 0 },
     stationStats: freshStats(), totalStats: freshStats()
   };
@@ -76,21 +76,33 @@ export function applyAction(room, actor, action) {
         room.introductionStep += 1;
         event(room, 'INTRODUCTION_ADVANCED', { step: room.introductionStep }, 'gm');
       } else {
-        room.phase = PHASE.SELF_INTRODUCTION;
-        room.timer = { startedAt: Date.now(), endsAt: Date.now() + 480_000 };
-        event(room, 'SELF_INTRODUCTION_STARTED', { seconds: 480 });
+        startSelfIntroduction(room);
       }
       break;
     case 'START_SELF_INTRODUCTION':
       requireGm(actor);
       if (room.phase !== PHASE.INTRODUCTION) throw new Error('導入フェーズではありません');
-      room.phase = PHASE.SELF_INTRODUCTION;
-      room.timer = { startedAt: Date.now(), endsAt: Date.now() + 480_000 };
-      event(room, 'SELF_INTRODUCTION_STARTED', { seconds: 480 });
+      startSelfIntroduction(room);
       break;
+    case 'COMPLETE_SELF_INTRODUCTION':
+      requirePlayer(actor);
+      if (room.phase !== PHASE.SELF_INTRODUCTION) throw new Error('自己紹介フェーズではありません');
+      actor.selfIntroductionComplete = true;
+      event(room, 'SELF_INTRODUCTION_COMPLETED', { participantId: actor.participantId, playerNumber: actor.playerNumber });
+      break;
+    case 'TEST_COMPLETE_SELF_INTRODUCTION': {
+      requireGm(actor);
+      if (!room.testMode) throw new Error('テストルーム専用操作です');
+      if (room.phase !== PHASE.SELF_INTRODUCTION) throw new Error('自己紹介フェーズではありません');
+      const player = room.players.find(item => item.participantId === action.participantId);
+      if (!player) throw new Error('対象PLが見つかりません');
+      applyAction(room, player, { type: 'COMPLETE_SELF_INTRODUCTION' });
+      break;
+    }
     case 'OPEN_PACK_SELECTION':
       requireGm(actor);
       if (room.phase !== PHASE.SELF_INTRODUCTION) throw new Error('自己紹介フェーズではありません');
+      if (Date.now() < room.timer.endsAt && room.players.some(player => !player.selfIntroductionComplete)) throw new Error('8分経過またはPL7人全員の完了が必要です');
       room.phase = PHASE.PACK_SELECTION;
       room.timer = null;
       event(room, 'PACK_SELECTION_STARTED');
@@ -193,6 +205,13 @@ export function applyAction(room, actor, action) {
   }
   room.updatedAt = now();
   return room;
+}
+
+function startSelfIntroduction(room) {
+  room.phase = PHASE.SELF_INTRODUCTION;
+  room.timer = { startedAt: Date.now(), endsAt: Date.now() + 480_000 };
+  for (const player of room.players) player.selfIntroductionComplete = false;
+  event(room, 'SELF_INTRODUCTION_STARTED', { seconds: 480 });
 }
 
 function startFirstStation(room) {
@@ -328,7 +347,7 @@ export function projectState(room, actor) {
     code: room.code, testMode: Boolean(room.testMode), phase: room.phase, station: room.stationIndex >= 0 ? STATIONS[room.stationIndex] : null,
     stationTurn: room.stationTurn, globalTurnIndex: room.globalTurnIndex, timer: room.timer, introductionStep: room.introductionStep || 0,
     me: actor.role === 'GM' ? { participantId: actor.participantId, role: 'GM', name: actor.name } : privatePlayer(actor, room),
-    players: room.players.map(player => ({ participantId: player.participantId, playerNumber: player.playerNumber, name: player.name, hp: player.hp, isDeadState: player.isDeadState, packId: room.phase === PHASE.PACK_SELECTION && !isGm ? null : player.packId, confirmed: player.confirmed, selection: isGm || player.participantId === actor.participantId ? player.selection : undefined })),
+    players: room.players.map(player => ({ participantId: player.participantId, playerNumber: player.playerNumber, name: player.name, hp: player.hp, isDeadState: player.isDeadState, packId: room.phase === PHASE.PACK_SELECTION && !isGm ? null : player.packId, confirmed: player.confirmed, selfIntroductionComplete: Boolean(player.selfIntroductionComplete), selection: isGm || player.participantId === actor.participantId ? player.selection : undefined })),
     packs: PACKS.map(pack => ({ ...pack, cards: isGm || actor.packId === pack.id ? CARDS.filter(card => card.packId === pack.id) : undefined })),
     testPlayers: isGm && room.testMode ? room.players.map(player => ({ ...privatePlayer(player, room), selection: player.selection, confirmed: player.confirmed })) : undefined,
     revealedUsages: room.phase === PHASE.TURN_RESULT ? room.revealedUsages : [], events: publicEvents
