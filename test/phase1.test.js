@@ -390,6 +390,20 @@ test('Hunger Hell introduction is available before its first turn', () => {
   assert.equal(room.globalTurnIndex, 13);
 });
 
+test('War Hell introduction is available before its first turn', () => {
+  const room = createTestRoom();
+  applyAction(room, room.gm, { type: 'TEST_JUMP_PHASE', phase: 'STATION_INTRODUCTION', stationIndex: 5, stationTurn: 0 });
+  const introduction = projectState(room, room.players[0]).stationIntroduction;
+  assert.equal(introduction.title, '第六地獄へ');
+  assert.match(introduction.lines.join('\\n'), /駅固有效果：修羅の戦場/);
+  assert.match(introduction.lines.join('\\n'), /直接ダメージの上限は、これまでどおり4/);
+
+  while (room.phase === 'STATION_INTRODUCTION') applyAction(room, room.gm, { type: 'ADVANCE_STATION_INTRODUCTION' });
+  assert.equal(room.phase, 'TURN_SELECTION');
+  assert.equal(room.stationTurn, 1);
+  assert.equal(room.globalTurnIndex, 17);
+});
+
 test('each shop requires its fixed one-coin deposit and grants its defined change', () => {
   const firstRoom = firstShopRoom();
   assert.throws(() => applyAction(firstRoom, firstRoom.players[0], { type: 'BUY_SHOP_ITEM', itemId: 'will-o-wisp-amulet', paymentAmount: 3 }), /壱×5/);
