@@ -493,7 +493,7 @@ function applyStationDamage(room, attacks) {
   }
 }
 function damageSelf(room, player, amount, cardId) { const before = player.hp; player.hp = Math.max(0, player.hp - amount); if (before > 0 && player.hp === 0) player.stationStats.reachedZero = true; event(room, 'SELF_DAMAGE', { participantId: player.participantId, cardId, amount: before - player.hp }); }
-function applyHeal(room, source, targetId, amount, cardId, support = true) { const target = room.players.find(p => p.participantId === targetId); const before = target.hp; target.hp = Math.min(15, target.hp + amount); const actual = target.hp - before; if (support && source !== target) { source.stationStats.support += actual; source.totalStats.support += actual; } event(room, 'HEAL', { sourceId: source.participantId, targetId, cardId, amount: actual }); }
+function applyHeal(room, source, targetId, amount, cardId, support = true) { const target = room.players.find(p => p.participantId === targetId); const bloodTideBonus = STATIONS[room.stationIndex]?.id === 'blood' ? 1 : 0; const before = target.hp; target.hp = Math.min(15, target.hp + amount + bloodTideBonus); const actual = target.hp - before; if (support && source !== target) { source.stationStats.support += actual; source.totalStats.support += actual; } event(room, 'HEAL', { sourceId: source.participantId, targetId, cardId, amount: actual }); }
 
 function finishStation(room) {
   const eligible = room.players.filter(player => !player.stationStats.reachedZero);

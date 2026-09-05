@@ -335,6 +335,24 @@ test('needle station introduction is reachable after Ice Hell and needle concent
   assert.ok(room.events.some(item => item.type === 'STATION_DAMAGE' && item.payload.targetId === room.players[1].participantId && item.payload.reason === 'NEEDLE_CONCENTRATION'));
 });
 
+test('Blood Hell introduction is available and Blood Tide adds one to real recovery', () => {
+  const room = createTestRoom();
+  applyAction(room, room.gm, { type: 'TEST_JUMP_PHASE', phase: 'STATION_INTRODUCTION', stationIndex: 3, stationTurn: 0 });
+  assert.match(projectState(room, room.players[0]).stationIntroduction.lines.join('\n'), /血潮/);
+
+  applyAction(room, room.gm, { type: 'TEST_JUMP_PHASE', phase: 'TURN_SELECTION', stationIndex: 3, stationTurn: 1 });
+  room.players[0].hp = 10;
+  const cardIds = ['flame-strike', 'ice-spear', 'follow-needle', 'healing-blood', 'gluttony', 'heavy-slash', 'severance'];
+  const targetIndexes = [1, 2, 1, 0, 1, 1, 1];
+  room.players.forEach((player, index) => {
+    applyAction(room, player, { type: 'SELECT_CARD', cardId: cardIds[index], targetId: room.players[targetIndexes[index]].participantId });
+    applyAction(room, player, { type: 'CONFIRM_CARD' });
+  });
+  applyAction(room, room.gm, { type: 'REVEAL_AND_RESOLVE' });
+  assert.equal(room.players[0].hp, 13);
+  assert.ok(room.events.some(item => item.type === 'HEAL' && item.payload.cardId === 'healing-blood' && item.payload.amount === 3));
+});
+
 test('first-shop buyer chooses the one-coin payment amount and receives only the resulting change', () => {
   const exactRoom = firstShopRoom();
   applyAction(exactRoom, exactRoom.players[0], { type: 'BUY_SHOP_ITEM', itemId: 'will-o-wisp-amulet', paymentAmount: 3 });
