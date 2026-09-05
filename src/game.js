@@ -5,6 +5,7 @@ export const PHASE = Object.freeze({ LOBBY: 'LOBBY', INTRODUCTION: 'INTRODUCTION
 const token = () => crypto.randomBytes(24).toString('base64url');
 const id = () => crypto.randomUUID();
 const now = () => new Date().toISOString();
+const INTRODUCTION_STEP_COUNT = 56;
 
 function event(room, type, payload = {}, visibility = 'public') {
   room.events.push({ id: id(), type, payload, visibility, globalTurnIndex: room.globalTurnIndex, at: now() });
@@ -65,7 +66,20 @@ export function applyAction(room, actor, action) {
       if (room.phase !== PHASE.LOBBY) throw new Error('乗車受付フェーズではありません');
       if (room.players.length !== 7) throw new Error('PL7人の参加が必要です');
       room.phase = PHASE.INTRODUCTION;
+      room.introductionStep = 2;
       event(room, 'INTRODUCTION_STARTED');
+      break;
+    case 'ADVANCE_INTRODUCTION':
+      requireGm(actor);
+      if (room.phase !== PHASE.INTRODUCTION) throw new Error('導入フェーズではありません');
+      if (room.introductionStep < INTRODUCTION_STEP_COUNT) {
+        room.introductionStep += 1;
+        event(room, 'INTRODUCTION_ADVANCED', { step: room.introductionStep }, 'gm');
+      } else {
+        room.phase = PHASE.SELF_INTRODUCTION;
+        room.timer = { startedAt: Date.now(), endsAt: Date.now() + 480_000 };
+        event(room, 'SELF_INTRODUCTION_STARTED', { seconds: 480 });
+      }
       break;
     case 'START_SELF_INTRODUCTION':
       requireGm(actor);
@@ -312,7 +326,7 @@ export function projectState(room, actor) {
   const publicEvents = room.events.filter(item => item.visibility === 'public' || isGm || item.visibility === `private:${actor.participantId}`).slice(-100);
   return {
     code: room.code, testMode: Boolean(room.testMode), phase: room.phase, station: room.stationIndex >= 0 ? STATIONS[room.stationIndex] : null,
-    stationTurn: room.stationTurn, globalTurnIndex: room.globalTurnIndex, timer: room.timer,
+    stationTurn: room.stationTurn, globalTurnIndex: room.globalTurnIndex, timer: room.timer, introductionStep: room.introductionStep || 0,
     me: actor.role === 'GM' ? { participantId: actor.participantId, role: 'GM', name: actor.name } : privatePlayer(actor, room),
     players: room.players.map(player => ({ participantId: player.participantId, playerNumber: player.playerNumber, name: player.name, hp: player.hp, isDeadState: player.isDeadState, packId: room.phase === PHASE.PACK_SELECTION && !isGm ? null : player.packId, confirmed: player.confirmed, selection: isGm || player.participantId === actor.participantId ? player.selection : undefined })),
     packs: PACKS.map(pack => ({ ...pack, cards: isGm || actor.packId === pack.id ? CARDS.filter(card => card.packId === pack.id) : undefined })),

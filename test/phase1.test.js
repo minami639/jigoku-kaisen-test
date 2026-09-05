@@ -26,7 +26,11 @@ test('introduction is followed by an eight-minute self-introduction phase', () =
   assert.throws(() => applyAction(room, room.gm, { type: 'OPEN_PACK_SELECTION' }), /自己紹介/);
   applyAction(room, room.gm, { type: 'OPEN_INTRODUCTION' });
   assert.equal(room.phase, 'INTRODUCTION');
-  applyAction(room, room.gm, { type: 'START_SELF_INTRODUCTION' });
+  assert.equal(room.introductionStep, 2);
+  assert.throws(() => applyAction(room, room.players[0], { type: 'ADVANCE_INTRODUCTION' }), /GM専用/);
+  while (room.introductionStep < 56) applyAction(room, room.gm, { type: 'ADVANCE_INTRODUCTION' });
+  assert.equal(room.phase, 'INTRODUCTION');
+  applyAction(room, room.gm, { type: 'ADVANCE_INTRODUCTION' });
   assert.equal(room.phase, 'SELF_INTRODUCTION');
   assert.equal(room.timer.endsAt - room.timer.startedAt, 480_000);
   applyAction(room, room.gm, { type: 'OPEN_PACK_SELECTION' });
