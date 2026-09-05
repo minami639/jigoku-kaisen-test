@@ -1,8 +1,9 @@
 import crypto from 'node:crypto';
 import { CARDS, CARD_BY_ID, PACKS, PACK_BY_ID, SHOP_BY_STATION_ID, SHOP_ITEMS, SHOP_ITEM_BY_ID, STATIONS } from './definitions.js';
+import { GAME_GUIDE } from './game-guide.js';
 import { stationIntroductionFor } from './station-introductions.js';
 
-export const PHASE = Object.freeze({ LOBBY: 'LOBBY', INTRODUCTION: 'INTRODUCTION', SELF_INTRODUCTION: 'SELF_INTRODUCTION', PACK_SELECTION: 'PACK_SELECTION', TURN_SELECTION: 'TURN_SELECTION', TURN_RESULT: 'TURN_RESULT', STATION_RESULT: 'STATION_RESULT', FREE_TIME: 'FREE_TIME', STATION_INTRODUCTION: 'STATION_INTRODUCTION' });
+export const PHASE = Object.freeze({ LOBBY: 'LOBBY', INTRODUCTION: 'INTRODUCTION', SELF_INTRODUCTION: 'SELF_INTRODUCTION', GAME_GUIDE: 'GAME_GUIDE', PACK_SELECTION: 'PACK_SELECTION', TURN_SELECTION: 'TURN_SELECTION', TURN_RESULT: 'TURN_RESULT', STATION_RESULT: 'STATION_RESULT', FREE_TIME: 'FREE_TIME', STATION_INTRODUCTION: 'STATION_INTRODUCTION' });
 const token = () => crypto.randomBytes(24).toString('base64url');
 const id = () => crypto.randomUUID();
 const now = () => new Date().toISOString();
@@ -39,7 +40,7 @@ export function joinRoom(room, name) {
   const player = {
     participantId: id(), authToken: token(), role: 'PL', playerNumber, name: name.trim(), hp: 15,
     isDeadState: false, packId: null, selection: null, confirmed: false, selfIntroductionComplete: false, freeTimeReady: false, cardUsage: [], cardMarks: {}, shopInventory: [], purchaseNotice: null,
-    ongoingEffects: [], currency: { one: 5, two: 0, three: 0, five: 0, seven: 0 },
+    ongoingEffects: [], currency: { one: 0, two: 0, three: 0, five: 0, seven: 0 },
     stationStats: freshStats(), totalStats: freshStats()
   };
   if (!player.name) throw new Error('名前を入力してください');
@@ -68,6 +69,7 @@ function ensureRoomState(room) {
   room.currencyTransactions ||= [];
   room.firstPurchaseCompleted ||= false;
   room.stationIntroductionStep ||= 0;
+  room.gameGuideStep ||= 0;
   for (const transaction of room.purchaseTransactions) {
     transaction.currencyCocofoliaApplied ??= Boolean(transaction.cocofoliaApplied);
   }
@@ -126,6 +128,27 @@ export function applyAction(room, actor, action) {
       room.phase = PHASE.PACK_SELECTION;
       room.timer = null;
       event(room, 'PACK_SELECTION_STARTED');
+      break;
+    case 'OPEN_GAME_GUIDE':
+      requireGm(actor);
+      if (room.phase !== PHASE.SELF_INTRODUCTION) throw new Error('自己紹介フェーズではありません');
+      if (Date.now() < room.timer.endsAt && room.players.some(player => !player.selfIntroductionComplete)) throw new Error('8分経過またはPL7人全員の完了が必要です');
+      room.phase = PHASE.GAME_GUIDE;
+      room.timer = null;
+      room.gameGuideStep = 1;
+      event(room, 'GAME_GUIDE_STARTED');
+      break;
+    case 'ADVANCE_GAME_GUIDE':
+      requireGm(actor);
+      if (room.phase !== PHASE.GAME_GUIDE) throw new Error('ゲーム説明フェーズではありません');
+      if (room.gameGuideStep < GAME_GUIDE.lines.length) {
+        room.gameGuideStep += 1;
+        event(room, 'GAME_GUIDE_ADVANCED', { step: room.gameGuideStep }, 'gm');
+      } else {
+        room.phase = PHASE.PACK_SELECTION;
+        room.timer = null;
+        event(room, 'PACK_SELECTION_STARTED');
+      }
       break;
     case 'SELECT_PACK': {
       requirePlayer(actor);
@@ -326,7 +349,7 @@ export function applyAction(room, actor, action) {
 
 function jumpTestPhase(room, action) {
   const destination = String(action.phase || '');
-  if (![PHASE.INTRODUCTION, PHASE.SELF_INTRODUCTION, PHASE.PACK_SELECTION, PHASE.TURN_SELECTION, PHASE.TURN_RESULT, PHASE.FREE_TIME, PHASE.STATION_INTRODUCTION].includes(destination)) throw new Error('移動先フェーズが不正です');
+  if (![PHASE.INTRODUCTION, PHASE.SELF_INTRODUCTION, PHASE.GAME_GUIDE, PHASE.PACK_SELECTION, PHASE.TURN_SELECTION, PHASE.TURN_RESULT, PHASE.FREE_TIME, PHASE.STATION_INTRODUCTION].includes(destination)) throw new Error('移動先フェーズが不正です');
   room.revealedUsages = [];
   for (const player of room.players) { player.selection = null; player.confirmed = false; }
 
@@ -335,6 +358,8 @@ function jumpTestPhase(room, action) {
   } else if (destination === PHASE.SELF_INTRODUCTION) {
     room.stationIndex = -1; room.stationTurn = 0; room.globalTurnIndex = 0;
     startSelfIntroduction(room);
+  } else if (destination === PHASE.GAME_GUIDE) {
+    room.phase = destination; room.stationIndex = -1; room.stationTurn = 0; room.globalTurnIndex = 0; room.timer = null; room.gameGuideStep = 1;
   } else if (destination === PHASE.PACK_SELECTION) {
     room.phase = destination; room.stationIndex = -1; room.stationTurn = 0; room.globalTurnIndex = 0; room.timer = null;
   } else {
@@ -669,6 +694,7 @@ export function projectState(room, actor) {
   return {
     code: room.code, testMode: Boolean(room.testMode), phase: room.phase, station: room.stationIndex >= 0 ? STATIONS[room.stationIndex] : null,
     stationTurn: room.stationTurn, globalTurnIndex: room.globalTurnIndex, timer: room.timer, introductionStep: room.introductionStep || 0,
+    gameGuide: room.phase === PHASE.GAME_GUIDE ? { title: GAME_GUIDE.title, lines: GAME_GUIDE.lines, step: room.gameGuideStep } : null,
     stationIntroduction: stationIntroduction ? { title: stationIntroduction.title, lines: stationIntroduction.lines, step: room.stationIntroductionStep } : null,
     me: actor.role === 'GM' ? { participantId: actor.participantId, role: 'GM', name: actor.name } : privatePlayer(actor, room),
     players: room.players.map(player => ({ participantId: player.participantId, playerNumber: player.playerNumber, name: player.name, hp: player.hp, isDeadState: player.isDeadState, packId: player.packId, confirmed: player.confirmed, selfIntroductionComplete: Boolean(player.selfIntroductionComplete), freeTimeReady: Boolean(player.freeTimeReady), selection: isGm || player.participantId === actor.participantId ? player.selection : undefined })),

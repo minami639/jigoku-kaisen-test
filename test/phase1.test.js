@@ -45,6 +45,23 @@ test('introduction is followed by an eight-minute self-introduction phase', () =
   assert.equal(room.timer, null);
 });
 
+test('game guide is shown after self-introduction and every player starts with no currency', () => {
+  const room = createRoom();
+  Array.from({ length: 7 }, (_, index) => joinRoom(room, 'PL' + (index + 1)));
+  assert.ok(room.players.every(player => player.currency.one === 0));
+  applyAction(room, room.gm, { type: 'OPEN_INTRODUCTION' });
+  applyAction(room, room.gm, { type: 'START_SELF_INTRODUCTION' });
+  completeSelfIntroductions(room);
+  applyAction(room, room.gm, { type: 'OPEN_GAME_GUIDE' });
+  assert.equal(room.phase, 'GAME_GUIDE');
+  const playerView = projectState(room, room.players[0]);
+  assert.match(playerView.gameGuide.lines.join('\n'), /ココフォリア/);
+  assert.throws(() => applyAction(room, room.players[0], { type: 'ADVANCE_GAME_GUIDE' }), /GM専用/);
+  while (room.gameGuideStep < playerView.gameGuide.lines.length) applyAction(room, room.gm, { type: 'ADVANCE_GAME_GUIDE' });
+  applyAction(room, room.gm, { type: 'ADVANCE_GAME_GUIDE' });
+  assert.equal(room.phase, 'PACK_SELECTION');
+});
+
 test('exactly seven players join and pack duplication blocks station start', () => {
   const room = createRoom();
   const players = Array.from({ length: 7 }, (_, index) => joinRoom(room, `PL${index + 1}`));
@@ -191,6 +208,10 @@ test('test GM can jump freely between phases and station turns', () => {
   assert.equal(room.stationIndex, -1);
   assert.equal(room.globalTurnIndex, 0);
 
+  applyAction(room, room.gm, { type: 'TEST_JUMP_PHASE', phase: 'GAME_GUIDE' });
+  assert.equal(room.phase, 'GAME_GUIDE');
+  assert.equal(room.gameGuideStep, 1);
+
   const normalRoom = createRoom();
   assert.throws(() => applyAction(normalRoom, normalRoom.gm, { type: 'TEST_JUMP_PHASE', phase: 'INTRODUCTION' }), /テストルーム専用/);
 });
@@ -218,6 +239,7 @@ test('test GM can operate one PL card flow without changing normal permissions',
 function firstShopRoom() {
   const room = createTestRoom();
   applyAction(room, room.gm, { type: 'TEST_JUMP_PHASE', phase: 'FREE_TIME', stationIndex: 0, stationTurn: 0 });
+  room.players.forEach(player => { player.currency.one = 5; });
   return room;
 }
 
@@ -362,6 +384,7 @@ test('each shop requires its fixed one-coin deposit and grants its defined chang
   assert.equal(firstRoom.players[0].currency.two, 1);
 
   const secondRoom = createTestRoom();
+  secondRoom.players[0].currency.one = 5;
   applyAction(secondRoom, secondRoom.gm, { type: 'TEST_JUMP_PHASE', phase: 'FREE_TIME', stationIndex: 1, stationTurn: 0 });
   applyAction(secondRoom, secondRoom.players[0], { type: 'BUY_SHOP_ITEM', itemId: 'hell-key', paymentAmount: 5 });
   assert.equal(secondRoom.players[0].currency.one, 0);
@@ -399,7 +422,7 @@ test('third scorch result advances through station result and GM-started free ti
   applyAction(room, room.gm, { type: 'NEXT_TURN' });
   assert.equal(room.phase, 'STATION_RESULT');
   assert.equal(room.stationResult.rankings.length, 7);
-  assert.ok(room.players.every(player => player.currency.one >= 5));
+  assert.ok(room.players.every(player => player.currency.one >= 3));
   applyAction(room, room.gm, { type: 'START_FREE_TIME' });
   assert.equal(room.phase, 'FREE_TIME');
   assert.equal(room.timer.endsAt - room.timer.startedAt, 300_000);
