@@ -6,6 +6,8 @@ import { PACKS, CARDS, STATIONS } from '../src/definitions.js';
 function setup() {
   const room = createRoom('獄長');
   const players = Array.from({ length: 7 }, (_, index) => joinRoom(room, `PL${index + 1}`));
+  applyAction(room, room.gm, { type: 'OPEN_INTRODUCTION' });
+  applyAction(room, room.gm, { type: 'START_SELF_INTRODUCTION' });
   applyAction(room, room.gm, { type: 'OPEN_PACK_SELECTION' });
   players.forEach((player, index) => applyAction(room, player, { type: 'SELECT_PACK', packId: PACKS[index].id, confirmed: true }));
   applyAction(room, room.gm, { type: 'START_FIRST_STATION' });
@@ -18,10 +20,26 @@ test('definitions contain seven packs, 35 cards and 25 configured turns', () => 
   assert.equal(STATIONS.reduce((sum, station) => sum + station.turnCount, 0), 25);
 });
 
+test('introduction is followed by an eight-minute self-introduction phase', () => {
+  const room = createRoom();
+  Array.from({ length: 7 }, (_, index) => joinRoom(room, `PL${index + 1}`));
+  assert.throws(() => applyAction(room, room.gm, { type: 'OPEN_PACK_SELECTION' }), /自己紹介/);
+  applyAction(room, room.gm, { type: 'OPEN_INTRODUCTION' });
+  assert.equal(room.phase, 'INTRODUCTION');
+  applyAction(room, room.gm, { type: 'START_SELF_INTRODUCTION' });
+  assert.equal(room.phase, 'SELF_INTRODUCTION');
+  assert.equal(room.timer.endsAt - room.timer.startedAt, 480_000);
+  applyAction(room, room.gm, { type: 'OPEN_PACK_SELECTION' });
+  assert.equal(room.phase, 'PACK_SELECTION');
+  assert.equal(room.timer, null);
+});
+
 test('exactly seven players join and pack duplication blocks station start', () => {
   const room = createRoom();
   const players = Array.from({ length: 7 }, (_, index) => joinRoom(room, `PL${index + 1}`));
   assert.throws(() => joinRoom(room, 'PL8'), /7人/);
+  applyAction(room, room.gm, { type: 'OPEN_INTRODUCTION' });
+  applyAction(room, room.gm, { type: 'START_SELF_INTRODUCTION' });
   applyAction(room, room.gm, { type: 'OPEN_PACK_SELECTION' });
   players.forEach(player => applyAction(room, player, { type: 'SELECT_PACK', packId: 'scorch', confirmed: true }));
   assert.throws(() => applyAction(room, room.gm, { type: 'START_FIRST_STATION' }), /重複/);
@@ -81,8 +99,10 @@ test('single-player test room lets GM assign seven unique packs and autofill a t
   const room = createTestRoom();
   assert.equal(room.testMode, true);
   assert.equal(room.players.length, 7);
-  assert.equal(room.phase, 'PACK_SELECTION');
+  assert.equal(room.phase, 'INTRODUCTION');
   assert.ok(room.players.every(player => player.packId === null));
+  applyAction(room, room.gm, { type: 'START_SELF_INTRODUCTION' });
+  applyAction(room, room.gm, { type: 'OPEN_PACK_SELECTION' });
   room.players.forEach((player, index) => applyAction(room, room.gm, { type: 'TEST_SELECT_PACK', participantId: player.participantId, packId: PACKS[index].id }));
   assert.equal(new Set(room.players.map(player => player.packId)).size, 7);
   applyAction(room, room.gm, { type: 'START_FIRST_STATION' });
@@ -95,6 +115,8 @@ test('single-player test room lets GM assign seven unique packs and autofill a t
 
 test('test-room GM can inspect every PL view without exposing it to PL clients', () => {
   const room = createTestRoom();
+  applyAction(room, room.gm, { type: 'START_SELF_INTRODUCTION' });
+  applyAction(room, room.gm, { type: 'OPEN_PACK_SELECTION' });
   room.players.forEach((player, index) => applyAction(room, room.gm, { type: 'TEST_SELECT_PACK', participantId: player.participantId, packId: PACKS[index].id }));
   const gmView = projectState(room, room.gm);
   const plView = projectState(room, room.players[0]);
@@ -106,6 +128,8 @@ test('test-room GM can inspect every PL view without exposing it to PL clients',
 
 test('test-room GM can automatically assign all seven packs without duplication', () => {
   const room = createTestRoom();
+  applyAction(room, room.gm, { type: 'START_SELF_INTRODUCTION' });
+  applyAction(room, room.gm, { type: 'OPEN_PACK_SELECTION' });
   applyAction(room, room.gm, { type: 'TEST_AUTOFILL_PACKS' });
   assert.ok(room.players.every(player => player.packId && player.confirmed));
   assert.equal(new Set(room.players.map(player => player.packId)).size, 7);

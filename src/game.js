@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import { CARDS, CARD_BY_ID, PACKS, PACK_BY_ID, STATIONS } from './definitions.js';
 
-export const PHASE = Object.freeze({ LOBBY: 'LOBBY', PACK_SELECTION: 'PACK_SELECTION', TURN_SELECTION: 'TURN_SELECTION', TURN_RESULT: 'TURN_RESULT' });
+export const PHASE = Object.freeze({ LOBBY: 'LOBBY', INTRODUCTION: 'INTRODUCTION', SELF_INTRODUCTION: 'SELF_INTRODUCTION', PACK_SELECTION: 'PACK_SELECTION', TURN_SELECTION: 'TURN_SELECTION', TURN_RESULT: 'TURN_RESULT' });
 const token = () => crypto.randomBytes(24).toString('base64url');
 const id = () => crypto.randomUUID();
 const now = () => new Date().toISOString();
@@ -25,7 +25,7 @@ export function createTestRoom(gmName = 'テストGM') {
   const room = createRoom(gmName);
   room.testMode = true;
   Array.from({ length: 7 }, (_, index) => joinRoom(room, `テストPL${index + 1}`));
-  applyAction(room, room.gm, { type: 'OPEN_PACK_SELECTION' });
+  applyAction(room, room.gm, { type: 'OPEN_INTRODUCTION' });
   event(room, 'TEST_ROOM_READY', { players: 7 });
   return room;
 }
@@ -60,11 +60,26 @@ function requirePlayer(actor) { if (actor.role !== 'PL') throw new Error('PL専�
 
 export function applyAction(room, actor, action) {
   switch (action.type) {
+    case 'OPEN_INTRODUCTION':
+      requireGm(actor);
+      if (room.phase !== PHASE.LOBBY) throw new Error('乗車受付フェーズではありません');
+      if (room.players.length !== 7) throw new Error('PL7人の参加が必要です');
+      room.phase = PHASE.INTRODUCTION;
+      event(room, 'INTRODUCTION_STARTED');
+      break;
+    case 'START_SELF_INTRODUCTION':
+      requireGm(actor);
+      if (room.phase !== PHASE.INTRODUCTION) throw new Error('導入フェーズではありません');
+      room.phase = PHASE.SELF_INTRODUCTION;
+      room.timer = { startedAt: Date.now(), endsAt: Date.now() + 480_000 };
+      event(room, 'SELF_INTRODUCTION_STARTED', { seconds: 480 });
+      break;
     case 'OPEN_PACK_SELECTION':
       requireGm(actor);
-      if (room.players.length !== 7) throw new Error('PL7人の参加が必要です');
+      if (room.phase !== PHASE.SELF_INTRODUCTION) throw new Error('自己紹介フェーズではありません');
       room.phase = PHASE.PACK_SELECTION;
-      event(room, 'INTRODUCTION_STARTED');
+      room.timer = null;
+      event(room, 'PACK_SELECTION_STARTED');
       break;
     case 'SELECT_PACK': {
       requirePlayer(actor);

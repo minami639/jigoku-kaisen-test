@@ -43,7 +43,7 @@ test('test-room API creates GM plus seven players only when explicitly enabled',
     const payload = await state.json();
     assert.equal(payload.me.role, 'GM');
     assert.equal(payload.players.length, 7);
-    assert.equal(payload.phase, 'PACK_SELECTION');
+    assert.equal(payload.phase, 'INTRODUCTION');
   });
 });
 
