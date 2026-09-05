@@ -93,6 +93,9 @@ test('GM alone reveals after all confirmations and focus-fire turn resolves', ()
   applyAction(room, room.gm, { type: 'REVEAL_AND_RESOLVE' });
   assert.equal(room.phase, 'TURN_RESULT');
   assert.equal(room.revealedUsages.length, 7);
+  const revealedView = projectState(room, players[1]);
+  assert.equal(revealedView.revealedUsages[0].cardName, '炎撃');
+  assert.match(revealedView.revealedUsages[0].description, /対象HP−2/);
   assert.ok(room.players.every(player => player.cardUsage.length === 1));
   assert.ok(room.events.some(event => event.type === 'TURN_RESOLVED'));
 });
