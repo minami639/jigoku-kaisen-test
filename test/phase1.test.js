@@ -546,6 +546,8 @@ test('third scorch result follows reward narration, Cocofolia sync, and GM-start
   const playerView = projectState(room, room.players[0]);
   assert.equal(playerView.stationResult.rewardSummary.find(entry => entry.participantId === room.players[0].participantId).totalOne, 5);
   assert.throws(() => applyAction(room, room.gm, { type: 'START_FREE_TIME' }), /未反映/);
+  assert.throws(() => applyAction(room, room.players[0], { type: 'CREATE_TRANSFER_REQUEST', recipientId: room.players[1].participantId, currencyType: 'one', amount: 1 }), /自由時間/);
+  assert.throws(() => applyAction(room, room.gm, { type: 'START_NEXT_STATION' }), /自由時間/);
   const transactions = room.currencyTransactions.filter(item => item.stationId === 'scorch');
   assert.ok(transactions.length > 0);
   applyAction(room, room.gm, { type: 'MARK_PLAYER_STATION_REWARDS_APPLIED', participantId: room.players[0].participantId });
