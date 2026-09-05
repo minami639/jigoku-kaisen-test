@@ -98,6 +98,9 @@ test('GM alone reveals after all confirmations and focus-fire turn resolves', ()
   assert.match(revealedView.revealedUsages[0].description, /対象HP−2/);
   assert.ok(room.players.every(player => player.cardUsage.length === 1));
   assert.ok(room.events.some(event => event.type === 'TURN_RESOLVED'));
+  assert.throws(() => applyAction(room, room.gm, { type: 'NEXT_TURN' }), /全PLの結果確認完了/);
+  players.forEach(player => applyAction(room, player, { type: 'ACK_RESULT' }));
+  assert.ok(room.players.every(player => player.confirmed));
 });
 
 test('normal cooldown uses globalTurnIndex across turns', () => {
@@ -108,6 +111,7 @@ test('normal cooldown uses globalTurnIndex across turns', () => {
     applyAction(room, player, { type: 'CONFIRM_CARD' });
   });
   applyAction(room, room.gm, { type: 'REVEAL_AND_RESOLVE' });
+  players.forEach(player => applyAction(room, player, { type: 'ACK_RESULT' }));
   applyAction(room, room.gm, { type: 'NEXT_TURN' });
   assert.equal(room.globalTurnIndex, 2);
   assert.throws(() => applyAction(room, players[0], { type: 'SELECT_CARD', cardId: 'flame-strike', targetId: players[1].participantId }), /通常CT/);

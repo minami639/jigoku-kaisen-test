@@ -140,8 +140,15 @@ export function applyAction(room, actor, action) {
       if (room.phase !== PHASE.TURN_SELECTION || room.players.some(p => !p.confirmed)) throw new Error('全PLの最終確認が必要です');
       resolveTurn(room);
       break;
+    case 'ACK_RESULT':
+      requirePlayer(actor);
+      if (room.phase !== PHASE.TURN_RESULT) throw new Error('ターン結果確認中ではありません');
+      actor.confirmed = true;
+      event(room, 'TURN_RESULT_ACKNOWLEDGED', { participantId: actor.participantId, playerNumber: actor.playerNumber });
+      break;
     case 'NEXT_TURN':
       requireGm(actor);
+      if (room.players.some(player => !player.confirmed)) throw new Error('全PLの結果確認完了が必要です');
       nextTurn(room);
       break;
     case 'SET_TIMER':
@@ -209,7 +216,7 @@ export function applyAction(room, actor, action) {
     case 'TEST_PLAYER_ACTION': {
       requireGm(actor);
       if (!room.testMode) throw new Error('テストルーム専用操作です');
-      if (!['SELECT_CARD', 'CONFIRM_CARD'].includes(action.playerAction?.type)) throw new Error('許可されていないテスト操作です');
+      if (!['SELECT_CARD', 'CONFIRM_CARD', 'ACK_RESULT'].includes(action.playerAction?.type)) throw new Error('許可されていないテスト操作です');
       const player = room.players.find(item => item.participantId === action.participantId);
       if (!player) throw new Error('対象PLが見つかりません');
       applyAction(room, player, action.playerAction);
