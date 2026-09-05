@@ -7,7 +7,7 @@ export const PHASE = Object.freeze({ LOBBY: 'LOBBY', INTRODUCTION: 'INTRODUCTION
 const token = () => crypto.randomBytes(24).toString('base64url');
 const id = () => crypto.randomUUID();
 const now = () => new Date().toISOString();
-const INTRODUCTION_STEP_COUNT = 40;
+const INTRODUCTION_STEP_COUNT = 39;
 
 function event(room, type, payload = {}, visibility = 'public') {
   room.events.push({ id: id(), type, payload, visibility, globalTurnIndex: room.globalTurnIndex, at: now() });

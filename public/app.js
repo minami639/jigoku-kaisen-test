@@ -6,6 +6,47 @@ let state = null, stream = null, tick = null, previewParticipantId = null, gmTab
 const esc = value => String(value ?? '').replace(/[&<>"]/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[char]));
 const categoryName = value => ({ attack: '攻撃', defense: '防御', support: '補助', heal: '回復', interference: '妨害' }[value] || value);
 const phaseName = () => ({ LOBBY: '乗車受付', INTRODUCTION: '導入', SELF_INTRODUCTION: '自己紹介', GAME_GUIDE: 'ゲーム説明', PACK_SELECTION: 'パック選択', TURN_SELECTION: 'カード秘密選択', TURN_RESULT: 'ターン結果', STATION_RESULT: '駅結果', FREE_TIME: '自由時間・休憩', STATION_INTRODUCTION: '駅導入' }[state.phase]);
+const INTRODUCTION_LINES = [
+  'ガタン、ガタン。',
+  '規則正しい揺れと、車輪が線路を擦る音。',
+  '目を開けると、そこは見知らぬ列車の中だった。窓の外には、景色らしい景色はない。',
+  'そして車内には、自分を含め、七人の人間がいた。',
+  '誰も、この列車に乗った覚えはない。',
+  'どうしてここにいるのか。どこへ向かっているのか。',
+  '何ひとつ分からないまま、列車だけが進み続けている。',
+  'そのとき、勢いよく車両の扉が開いた。',
+  '「はぁ〜い！」',
+  '「みなさ〜ん！ お目覚めですかぁ？」',
+  '現れたのは、小さな角を生やした奇妙な生き物だった。',
+  '車掌帽をかぶり、ぶかぶかの制服を着ている。その手には、人数分の切符が握られていた。',
+  '「いやぁ〜、よかったよかった！」',
+  '「七名様、ちゃ〜んと揃ってますねぇ！」',
+  '「それでは改めまして」',
+  '小鬼は帽子を押さえ、深々と頭を下げる。',
+  '「ようこそ！地獄廻線へ！」',
+  '聞き慣れない言葉が、車内に響く。',
+  '「この列車はこれから、七つの地獄を順番に巡りま〜す！」',
+  '「焦熱、氷結、針山、血の池、餓鬼、修羅……」',
+  '「そして最後は、無間地獄！」',
+  '「いやぁ、観光列車みたいで楽しそうですねぇ！」',
+  '小鬼は楽しそうに笑う。',
+  '「あっ、大事なことを忘れてました！」',
+  '「みなさん……」',
+  '少しだけ間を置いて。',
+  '「もう死んでますからねぇ。」',
+  '「なのでぇ、ここから先は生きてた頃の常識なんて、あんまり役に立ちませ〜ん！」',
+  '「七つの地獄を巡って、最後までちゃ〜んと乗っていてくださいね！」',
+  'その直後。車内放送のチャイムが鳴る。',
+  '――ピンポーン。',
+  '『まもなく――第一地獄。』',
+  '『焦熱地獄。』',
+  '「さぁ！」',
+  '「その前に、せっかく七人もいるんですから」',
+  '「まずは、お互いのことを知っておきましょうか！」',
+  'こうして。',
+  '行き先も、降り方も分からないまま。',
+  '七人を乗せた地獄廻線は、最初の駅へと走り始めた。'
+];
 const mePublic = id => state.players.find(player => player.participantId === id);
 const cardName = id => state.packs.flatMap(pack => pack.cards || []).find(card => card.id === id)?.name || id || 'なし';
 const playerName = id => { const player = mePublic(id); return player ? `PL${player.playerNumber} ${player.name}` : '対象なし'; };
@@ -25,9 +66,9 @@ async function connect() { if (!session) return; try { state = await request(`/a
 function timerHtml(compact = false) { if (!state.timer) return '<span class="timer-empty">--:--</span>'; const remaining = Math.max(0, Math.ceil((state.timer.endsAt - Date.now()) / 1000)); return `<span class="timer ${compact ? 'compact' : ''} ${remaining <= 30 ? 'warning' : ''}">${Math.floor(remaining / 60)}:${String(remaining % 60).padStart(2, '0')}</span>`; }
 function gameHeaderHtml(roleLabel) { const station = state.station; const turn = state.phase === 'STATION_INTRODUCTION' ? `— / ${station?.turnCount || '—'}` : station ? `${state.stationTurn} / ${station.turnCount}` : '—'; return `<section class="game-header"><div><span class="eyebrow">${esc(roleLabel)}</span><strong>${station ? esc(station.name) : phaseName()}</strong></div><div class="header-stat"><span>TURN</span><b>${turn}</b></div><div class="header-stat"><span>PHASE</span><b>${phaseName()}</b></div><div class="header-stat timer-stat"><span>TIME</span>${timerHtml(true)}</div>${station ? `<div class="station-effect"><span>駅効果</span><b>${esc(station.effect)}</b></div>` : ''}</section>`; }
 
-function introductionHtml() { return `<section class="panel script"><span class="eyebrow">導入「地獄廻線」</span><h2>地獄廻線</h2><p>ガタン、ガタン。</p><p>規則正しい揺れと、車輪が線路を擦る音。</p><p>目を開けると、そこは見知らぬ列車の中だった。窓の外には、景色らしい景色はない。</p><p>そして車内には、自分を含め、七人の人間がいた。</p><p>誰も、この列車に乗った覚えはない。</p><p>どうしてここにいるのか。どこへ向かっているのか。</p><p>何ひとつ分からないまま、列車だけが進み続けている。</p><p>そのとき、勢いよく車両の扉が開いた。</p><p>「はぁ〜い！」</p><p>「みなさ〜ん！ お目覚めですかぁ？」</p><p>現れたのは、小さな角を生やした奇妙な生き物だった。</p><p>車掌帽をかぶり、ぶかぶかの制服を着ている。その手には、人数分の切符が握られていた。</p><p>「いやぁ〜、よかったよかった！」</p><p>「七名様、ちゃ〜んと揃ってますねぇ！」</p><p>「それでは改めまして」</p><p>小鬼は帽子を押さえ、深々と頭を下げる。</p><p>「ようこそ！」</p><p>「<strong>地獄廻線へ！</strong>」</p><p>聞き慣れない言葉が、車内に響く。</p><p>「この列車はこれから、七つの地獄を順番に巡りま〜す！」</p><p>「焦熱、氷結、針山、血の池、餓鬼、修羅……」</p><p>「そして最後は、無間地獄！」</p><p>「いやぁ、観光列車みたいで楽しそうですねぇ！」</p><p>小鬼は楽しそうに笑う。</p><p>「あっ、大事なことを忘れてました！」</p><p>「みなさん……」</p><p>少しだけ間を置いて。</p><p>「<strong>もう死んでますからねぇ。</strong>」</p><p>「なのでぇ、ここから先は生きてた頃の常識なんて、あんまり役に立ちませ〜ん！」</p><p>「七つの地獄を巡って、最後までちゃ〜んと乗っていてくださいね！」</p><p>その直後。車内放送のチャイムが鳴る。</p><p><strong>――ピンポーン。</strong></p><p>『まもなく――第一地獄。』</p><p>『焦熱地獄。』</p><p>「さぁ！」</p><p>「その前に、せっかく七人もいるんですから」</p><p>「まずは、お互いのことを知っておきましょうか！」</p><p>こうして。</p><p>行き先も、降り方も分からないまま。</p><p>七人を乗せた地獄廻線は、最初の駅へと走り始めた。</p></section>`; }
+function introductionHtml() { return `<section class="panel script"><span class="eyebrow">導入「地獄廻線」</span><h2>地獄廻線</h2>${INTRODUCTION_LINES.map((line, index) => `<p ${index >= state.introductionStep ? 'hidden' : ''}>${esc(line)}</p>`).join('')}</section>`; }
 function applyIntroductionProgress() { if (state.phase !== 'INTRODUCTION') return; document.querySelectorAll('.script').forEach(script => { script.querySelectorAll(':scope > p').forEach((element, index) => { element.hidden = index >= state.introductionStep; }); }); }
-function introductionAdvanceHtml() { return `<div class="actions intro-actions"><button id="advanceIntro">${state.introductionStep >= 40 ? '自己紹介8分へ' : '次へ'}</button></div>`; }
+function introductionAdvanceHtml() { return `<div class="actions intro-actions"><button id="advanceIntro">${state.introductionStep >= INTRODUCTION_LINES.length ? '自己紹介8分へ' : '次へ'}</button></div>`; }
 function gameGuideHtml() { const guide = state.gameGuide; if (!guide) return ''; return `<section class="panel script"><span class="eyebrow">${esc(guide.title)}</span><h2>${esc(guide.title)}</h2>${guide.lines.map((line, index) => `<p ${index >= guide.step ? 'hidden' : ''}>${esc(line)}</p>`).join('')}</section>`; }
 function gameGuideAdvanceHtml() { const guide = state.gameGuide; if (!guide) return ''; return `<div class="actions intro-actions"><button id="advanceGameGuide">${guide.step >= guide.lines.length ? 'パック選択へ' : '次へ'}</button></div>`; }
 function stationIntroductionHtml() { const introduction = state.stationIntroduction; if (!introduction) return ''; return `<section class="panel script station-script"><span class="eyebrow">${esc(introduction.title)}</span><h2>${esc(state.station?.name || '')}</h2>${introduction.lines.map((line, index) => `<p data-station-line ${index >= introduction.step ? 'hidden' : ''}>${esc(line)}</p>`).join('')}</section>`; }
