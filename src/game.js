@@ -1323,11 +1323,10 @@ function makeChange(value) {
 }
 
 function purchaseShopItem(room, player, itemId, requestedPayment) {
-  const shop = SHOP_BY_STATION_ID[STATIONS[room.stationIndex]?.id];
-  if (room.phase !== PHASE.FREE_TIME || !shop) throw new Error('この自由時間ではショップを利用できません');
+  if (room.phase !== PHASE.FREE_TIME || !STATIONS[room.stationIndex]) throw new Error('この自由時間ではショップを利用できません');
   if (!room.timer || Date.now() >= room.timer.endsAt) throw new Error('ショップ購入受付は終了しました');
   const item = SHOP_ITEM_BY_ID[itemId];
-  if (!item || item.shop !== shop.id) throw new Error('現在のショップの商品ではありません');
+  if (!item || !unlockedShopItems(room).some(candidate => candidate.id === item.id)) throw new Error('まだ解禁されていないショップ商品です');
   if ((room.shopStock[item.id] || 0) < 1) throw new Error('他のプレイヤーが先に購入しました');
   const payment = normalizeShopPayment(requestedPayment);
   const paymentTotal = currencyValue(payment);
@@ -1435,13 +1434,23 @@ function advanceStationIntroduction(room) {
 }
 
 function shopForRoom(room) {
-  const definition = SHOP_BY_STATION_ID[STATIONS[room.stationIndex]?.id];
-  if (!definition) return { items: [] };
+  const currentStation = STATIONS[room.stationIndex];
+  const definition = SHOP_BY_STATION_ID[currentStation?.id];
+  const items = unlockedShopItems(room);
   return {
-    id: definition.id,
-    name: definition.name,
-    items: SHOP_ITEMS.filter(item => item.shop === definition.id).map(item => ({ ...item, soldOut: (room.shopStock[item.id] || 0) < 1 }))
+    id: definition?.id,
+    name: definition ? `${definition.name}を解禁` : 'ショップ',
+    currentShopId: definition?.id,
+    items: items.map(item => ({ ...item, soldOut: (room.shopStock[item.id] || 0) < 1, shopName: SHOP_BY_STATION_ID[item.unlockAfterStation]?.name, isNew: item.unlockAfterStation === currentStation?.id }))
   };
+}
+
+function unlockedShopItems(room) {
+  const currentStationIndex = room.stationIndex;
+  return SHOP_ITEMS.filter(item => {
+    const unlockStationIndex = STATIONS.findIndex(station => station.id === item.unlockAfterStation);
+    return unlockStationIndex >= 0 && unlockStationIndex <= currentStationIndex;
+  });
 }
 
 function nextTurn(room) {

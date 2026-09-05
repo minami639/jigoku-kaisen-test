@@ -120,15 +120,16 @@ export const CARD_BY_ID = Object.fromEntries(CARDS.map(card => [card.id, card]))
 export const PACK_BY_ID = Object.fromEntries(PACKS.map(pack => [pack.id, pack]));
 
 export const SHOP_DEFINITIONS = [
-  { id: 1, stationId: 'scorch', name: '第一ショップ' },
-  { id: 2, stationId: 'ice', name: '第二ショップ「氷獄売店」' },
-  { id: 3, stationId: 'needle', name: '第三ショップ「血池売店」' },
-  { id: 4, stationId: 'blood', name: '第四ショップ「餓鬼商店」' },
-  { id: 5, stationId: 'hunger', name: '第五ショップ「修羅売店」' },
-  { id: 6, stationId: 'war', name: '第六ショップ「無間売店」' }
+  { id: 1, unlockAfterStation: 'scorch', name: '第一ショップ' },
+  { id: 2, unlockAfterStation: 'ice', name: '第二ショップ「氷獄売店」' },
+  { id: 3, unlockAfterStation: 'needle', name: '第三ショップ「血池売店」' },
+  { id: 4, unlockAfterStation: 'blood', name: '第四ショップ「餓鬼商店」' },
+  { id: 5, unlockAfterStation: 'hunger', name: '第五ショップ「修羅売店」' },
+  { id: 6, unlockAfterStation: 'war', name: '第六ショップ「無間売店」' }
 ];
 
-export const SHOP_BY_STATION_ID = Object.fromEntries(SHOP_DEFINITIONS.map(shop => [shop.stationId, shop]));
+export const SHOP_BY_STATION_ID = Object.fromEntries(SHOP_DEFINITIONS.map(shop => [shop.unlockAfterStation, shop]));
+const SHOP_UNLOCK_AFTER_STATION_BY_ID = Object.fromEntries(SHOP_DEFINITIONS.map(shop => [shop.id, shop.unlockAfterStation]));
 
 export const SHOP_ITEMS = [
   { id: 'will-o-wisp-amulet', shop: 1, name: '鬼火のお守り', price: 3, effect: '自分が選んだ七獄カードの直接ダメージ＋1。上限4。', stock: 1 },
@@ -153,5 +154,5 @@ export const SHOP_ITEMS = [
   { id: 'enma-eye', shop: 6, name: '閻魔の眼', price: 3, effect: '最終確認前、指定PL1人の仮選択カード名だけを見る。', stock: 1 },
   { id: 'six-realms-chain', shop: 6, name: '六道の鎖', price: 5, effect: 'このターン、自分の七獄カードは対象変更を受けない。', stock: 1 },
   { id: 'infinite-slip', shop: 6, name: '無間の札', price: 7, effect: '無効で効果を失った場合、その使用による通常CTを発生させない。', stock: 1 }
-];
+].map(item => ({ ...item, unlockAfterStation: SHOP_UNLOCK_AFTER_STATION_BY_ID[item.shop] }));
 export const SHOP_ITEM_BY_ID = Object.fromEntries(SHOP_ITEMS.map(item => [item.id, item]));

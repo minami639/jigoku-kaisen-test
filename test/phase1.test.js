@@ -305,16 +305,30 @@ function firstShopRoom() {
   return room;
 }
 
-test('shops expose only the products for the current station free time', () => {
+test('shops expose the newly unlocked first-shop products during the first free time', () => {
   const room = firstShopRoom();
   const view = projectState(room, room.players[0]);
   assert.equal(SHOP_ITEMS.length, 22);
   assert.equal(SHOP_DEFINITIONS.length, 6);
+  assert.ok(SHOP_ITEMS.every(item => item.id && item.name && item.price && item.unlockAfterStation && item.effect && item.stock));
   assert.deepEqual(view.shop.items.map(item => [item.name, item.stock, item.soldOut]), [
     ['鬼火のお守り', 1, false], ['護りの数珠', 1, false], ['赤い包帯', 1, false]
   ]);
   applyAction(room, room.gm, { type: 'START_NEXT_STATION' });
   assert.throws(() => applyAction(room, room.players[0], { type: 'BUY_SHOP_ITEM', itemId: 'will-o-wisp-amulet' }), /自由時間/);
+});
+
+test('unlocked shop products remain available in later free time while locked shops stay unavailable', () => {
+  const room = createTestRoom();
+  applyAction(room, room.gm, { type: 'TEST_JUMP_PHASE', phase: 'FREE_TIME', stationIndex: 1, stationTurn: 0 });
+  room.players[0].currency.one = 3;
+  const view = projectState(room, room.players[0]);
+  assert.equal(view.shop.items.length, 10);
+  assert.equal(view.shop.items.filter(item => item.isNew).length, 7);
+  assert.ok(view.shop.items.some(item => item.id === 'will-o-wisp-amulet' && item.isNew === false));
+  applyAction(room, room.players[0], { type: 'BUY_SHOP_ITEM', itemId: 'will-o-wisp-amulet', payment: payment({ one: 3 }) });
+  assert.equal(room.players[0].shopInventory[0].itemId, 'will-o-wisp-amulet');
+  assert.throws(() => applyAction(room, room.players[1], { type: 'BUY_SHOP_ITEM', itemId: 'bloodstop-charm', payment: payment({ five: 1 }) }), /まだ解禁/);
 });
 
 test('first-shop purchases accept chosen coin types and return canonical change atomically', () => {
@@ -336,6 +350,37 @@ test('first-shop purchases accept chosen coin types and return canonical change 
   applyAction(exactRoom, exactRoom.players[0], { type: 'BUY_SHOP_ITEM', itemId: 'protective-rosary', payment: payment({ two: 1 }) });
   assert.equal(exactRoom.players[0].currency.two, 0);
   assert.equal(exactRoom.purchaseTransactions[0].change.total, 0);
+});
+
+test('shop payment change uses deterministic high-denomination decomposition', () => {
+  const cases = [
+    [{ one: 3 }, { one: 0, two: 0, three: 0, five: 0, seven: 0 }],
+    [{ one: 1, two: 1 }, { one: 0, two: 0, three: 0, five: 0, seven: 0 }],
+    [{ three: 1 }, { one: 0, two: 0, three: 0, five: 0, seven: 0 }],
+    [{ seven: 1 }, { one: 1, two: 0, three: 1, five: 0, seven: 0 }],
+    [{ two: 1, seven: 1 }, { one: 1, two: 0, three: 0, five: 1, seven: 0 }],
+    [{ three: 1, seven: 1 }, { one: 0, two: 0, three: 0, five: 0, seven: 1 }],
+    [{ three: 1, five: 1, seven: 1 }, { one: 0, two: 0, three: 0, five: 1, seven: 1 }]
+  ];
+  for (const [coins, expectedChange] of cases) {
+    const room = firstShopRoom();
+    const player = room.players[0];
+    player.currency = payment(coins);
+    applyAction(room, player, { type: 'BUY_SHOP_ITEM', itemId: 'will-o-wisp-amulet', payment: payment(coins) });
+    assert.deepEqual(room.purchaseTransactions[0].change.coins, expectedChange);
+  }
+});
+
+test('paid prime coins are consumed and returned change can be used for a later purchase', () => {
+  const room = firstShopRoom();
+  const player = room.players[0];
+  player.currency = payment({ five: 1 });
+  applyAction(room, player, { type: 'BUY_SHOP_ITEM', itemId: 'will-o-wisp-amulet', payment: payment({ five: 1 }) });
+  assert.equal(player.currency.five, 0);
+  assert.equal(player.currency.two, 1);
+  assert.throws(() => applyAction(room, player, { type: 'BUY_SHOP_ITEM', itemId: 'red-bandage', payment: payment({ five: 1 }) }), /伍/);
+  applyAction(room, player, { type: 'BUY_SHOP_ITEM', itemId: 'protective-rosary', payment: payment({ two: 1 }) });
+  assert.equal(player.currency.two, 0);
 });
 
 test('first shop rejects insufficient funds and resolves stock races without revealing buyer', () => {
@@ -498,7 +543,9 @@ test('every shop settles chosen payment coins and returns value-based change', (
   applyAction(secondRoom, secondRoom.players[0], { type: 'BUY_SHOP_ITEM', itemId: 'hell-key', payment: payment({ three: 1 }) });
   assert.equal(secondRoom.players[0].currency.three, 0);
   assert.equal(secondRoom.purchaseTransactions[0].change.total, 0);
-  assert.throws(() => applyAction(secondRoom, secondRoom.players[1], { type: 'BUY_SHOP_ITEM', itemId: 'will-o-wisp-amulet', payment: payment({ one: 3 }) }), /現在のショップ/);
+  secondRoom.players[1].currency.one = 3;
+  applyAction(secondRoom, secondRoom.players[1], { type: 'BUY_SHOP_ITEM', itemId: 'will-o-wisp-amulet', payment: payment({ one: 3 }) });
+  assert.equal(secondRoom.players[1].shopInventory[0].itemId, 'will-o-wisp-amulet');
 
   const thirdRoom = createTestRoom();
   thirdRoom.players[0].currency.seven = 1;
