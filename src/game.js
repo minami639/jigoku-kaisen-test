@@ -451,7 +451,7 @@ function prepareStationStart(room) {
 function startFirstStation(room) {
   if (room.phase !== PHASE.PACK_SELECTION) throw new Error('パック選択フェーズではありません');
   if (room.players.some(p => !p.confirmed || !p.packId)) throw new Error('全PLのパック確定が必要です');
-  if (new Set(room.players.map(p => p.packId)).size !== 7) throw new Error('七獄パックは重複できません');
+  if (new Set(room.players.map(p => p.packId)).size !== 7) throw new Error('カードパックは重複できません');
   room.stationIndex = 0; room.stationTurn = 1; room.globalTurnIndex = 1; room.phase = PHASE.TURN_SELECTION;
   room.timer = { startedAt: Date.now(), endsAt: Date.now() + STATIONS[0].turnSeconds * 1000 };
   room.activeStationEffectIds = [];
