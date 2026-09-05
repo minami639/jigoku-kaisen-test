@@ -452,13 +452,14 @@ function startFirstStation(room) {
   if (room.phase !== PHASE.PACK_SELECTION) throw new Error('パック選択フェーズではありません');
   if (room.players.some(p => !p.confirmed || !p.packId)) throw new Error('全PLのパック確定が必要です');
   if (new Set(room.players.map(p => p.packId)).size !== 7) throw new Error('カードパックは重複できません');
-  room.stationIndex = 0; room.stationTurn = 1; room.globalTurnIndex = 1; room.phase = PHASE.TURN_SELECTION;
-  room.timer = { startedAt: Date.now(), endsAt: Date.now() + STATIONS[0].turnSeconds * 1000 };
+  room.stationIndex = 0; room.stationTurn = 0; room.globalTurnIndex = 0; room.phase = PHASE.STATION_INTRODUCTION;
+  room.timer = null;
   room.activeStationEffectIds = [];
   for (const p of room.players) { p.confirmed = false; p.selection = null; p.stationStats = freshStats(); p.isDeadState = false; p.turnStartDeadState = false; }
-  prepareTurnSnapshot(room);
+  prepareStationStart(room);
+  room.stationIntroductionStep = 1;
   event(room, 'PACKS_CONFIRMED', { packs: room.players.map(p => ({ playerNumber: p.playerNumber, packId: p.packId })) });
-  event(room, 'TURN_STARTED', { stationId: STATIONS[0].id, stationTurn: 1, globalTurnIndex: 1 });
+  event(room, 'STATION_INTRODUCTION_STARTED', { stationId: STATIONS[0].id, stationEffects: activeStationEffectIds(room) });
 }
 
 function currentStation(room) { return STATIONS[room.stationIndex]; }

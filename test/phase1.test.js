@@ -16,6 +16,7 @@ function setup() {
   applyAction(room, room.gm, { type: 'OPEN_PACK_SELECTION' });
   players.forEach((player, index) => applyAction(room, player, { type: 'SELECT_PACK', packId: PACKS[index].id, confirmed: true }));
   applyAction(room, room.gm, { type: 'START_FIRST_STATION' });
+  while (room.phase === 'STATION_INTRODUCTION') applyAction(room, room.gm, { type: 'ADVANCE_STATION_INTRODUCTION' });
   return { room, players };
 }
 
@@ -23,6 +24,31 @@ test('definitions contain seven packs, 35 cards and 25 configured turns', () => 
   assert.equal(PACKS.length, 7);
   assert.equal(CARDS.length, 35);
   assert.equal(STATIONS.reduce((sum, station) => sum + station.turnCount, 0), 25);
+});
+
+test('pack confirmation shows the first Hell introduction before its first turn', () => {
+  const room = createRoom();
+  const players = Array.from({ length: 7 }, (_, index) => joinRoom(room, `PL${index + 1}`));
+  applyAction(room, room.gm, { type: 'OPEN_INTRODUCTION' });
+  applyAction(room, room.gm, { type: 'START_SELF_INTRODUCTION' });
+  completeSelfIntroductions(room);
+  applyAction(room, room.gm, { type: 'OPEN_PACK_SELECTION' });
+  players.forEach((player, index) => applyAction(room, player, { type: 'SELECT_PACK', packId: PACKS[index].id, confirmed: true }));
+
+  applyAction(room, room.gm, { type: 'START_FIRST_STATION' });
+  assert.equal(room.phase, 'STATION_INTRODUCTION');
+  assert.equal(room.stationIndex, 0);
+  assert.equal(room.stationTurn, 0);
+  assert.equal(room.globalTurnIndex, 0);
+  const introduction = projectState(room, players[0]).stationIntroduction;
+  assert.equal(introduction.title, '第一地獄へ');
+  assert.match(introduction.lines.join('\n'), /駅固有效果：灼熱/);
+  assert.throws(() => applyAction(room, players[0], { type: 'ADVANCE_STATION_INTRODUCTION' }), /GM専用/);
+
+  while (room.phase === 'STATION_INTRODUCTION') applyAction(room, room.gm, { type: 'ADVANCE_STATION_INTRODUCTION' });
+  assert.equal(room.phase, 'TURN_SELECTION');
+  assert.equal(room.stationTurn, 1);
+  assert.equal(room.globalTurnIndex, 1);
 });
 
 test('introduction is followed by an eight-minute self-introduction phase', () => {
@@ -179,6 +205,7 @@ test('single-player test room lets GM assign seven unique packs and autofill a t
   room.players.forEach((player, index) => applyAction(room, room.gm, { type: 'TEST_SELECT_PACK', participantId: player.participantId, packId: PACKS[index].id }));
   assert.equal(new Set(room.players.map(player => player.packId)).size, 7);
   applyAction(room, room.gm, { type: 'START_FIRST_STATION' });
+  while (room.phase === 'STATION_INTRODUCTION') applyAction(room, room.gm, { type: 'ADVANCE_STATION_INTRODUCTION' });
   assert.equal(room.phase, 'TURN_SELECTION');
   applyAction(room, room.gm, { type: 'TEST_AUTOFILL_TURN' });
   assert.ok(room.players.every(player => player.confirmed && player.selection));
