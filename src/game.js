@@ -16,7 +16,7 @@ export function createRoom(gmName = 'GM') {
   const gm = { participantId: id(), authToken: token(), role: 'GM', name: gmName.trim() || 'GM' };
   const room = {
     id: id(), code, phase: PHASE.LOBBY, gm, players: [], stationIndex: -1, stationTurn: 0,
-    globalTurnIndex: 0, timer: null, revealedUsages: [], stationResult: null, shopStock: Object.fromEntries(SHOP_ITEMS.map(item => [item.id, item.stock])), purchaseTransactions: [], firstPurchaseCompleted: false, events: [], createdAt: now(), updatedAt: now()
+    globalTurnIndex: 0, timer: null, revealedUsages: [], stationResult: null, shopStock: Object.fromEntries(SHOP_ITEMS.map(item => [item.id, item.stock])), purchaseTransactions: [], transferRequests: [], firstPurchaseCompleted: false, events: [], createdAt: now(), updatedAt: now()
   };
   event(room, 'ROOM_CREATED', { gmName: gm.name });
   return room;
@@ -62,6 +62,7 @@ function requirePlayer(actor) { if (actor.role !== 'PL') throw new Error('PL専�
 function ensureRoomState(room) {
   room.shopStock ||= Object.fromEntries(SHOP_ITEMS.map(item => [item.id, item.stock]));
   room.purchaseTransactions ||= [];
+  room.transferRequests ||= [];
   room.currencyTransactions ||= [];
   room.firstPurchaseCompleted ||= false;
   for (const player of room.players) {
@@ -174,7 +175,11 @@ export function applyAction(room, actor, action) {
       break;
     case 'BUY_SHOP_ITEM':
       requirePlayer(actor);
-      purchaseShopItem(room, actor, action.itemId);
+      purchaseShopItem(room, actor, action.itemId, action.paymentAmount);
+      break;
+    case 'CREATE_TRANSFER_REQUEST':
+      requirePlayer(actor);
+      createTransferRequest(room, actor, action);
       break;
     case 'DISMISS_PURCHASE_NOTICE':
       requirePlayer(actor);
@@ -198,6 +203,23 @@ export function applyAction(room, actor, action) {
       transaction.cocofoliaApplied = true;
       transaction.appliedAt = now();
       event(room, 'PURCHASE_COCOFOLIA_APPLIED', { transactionId: transaction.id }, 'gm');
+      break;
+    }
+    case 'APPROVE_TRANSFER':
+      requireGm(actor);
+      approveTransfer(room, action.transferId);
+      break;
+    case 'REJECT_TRANSFER':
+      requireGm(actor);
+      updateTransferStatus(room, action.transferId, 'REJECTED');
+      break;
+    case 'MARK_TRANSFER_APPLIED': {
+      requireGm(actor);
+      const transfer = room.transferRequests.find(item => item.id === action.transferId && item.status === 'CONFIRMED');
+      if (!transfer) throw new Error('確定済みの譲渡が見つかりません');
+      transfer.cocofoliaApplied = true;
+      transfer.appliedAt = now();
+      event(room, 'TRANSFER_COCOFOLIA_APPLIED', { transferId: transfer.id }, 'gm');
       break;
     }
     case 'SET_TIMER':
@@ -278,7 +300,7 @@ export function applyAction(room, actor, action) {
     case 'TEST_PLAYER_ACTION': {
       requireGm(actor);
       if (!room.testMode) throw new Error('テストルーム専用操作です');
-      if (!['SELECT_CARD', 'CONFIRM_CARD', 'ACK_RESULT', 'BUY_SHOP_ITEM', 'DISMISS_PURCHASE_NOTICE', 'SET_FREE_TIME_READY'].includes(action.playerAction?.type)) throw new Error('許可されていないテスト操作です');
+      if (!['SELECT_CARD', 'CONFIRM_CARD', 'ACK_RESULT', 'BUY_SHOP_ITEM', 'CREATE_TRANSFER_REQUEST', 'DISMISS_PURCHASE_NOTICE', 'SET_FREE_TIME_READY'].includes(action.playerAction?.type)) throw new Error('許可されていないテスト操作です');
       const player = room.players.find(item => item.participantId === action.participantId);
       if (!player) throw new Error('対象PLが見つかりません');
       applyAction(room, player, action.playerAction);
@@ -469,24 +491,84 @@ function finishStation(room) {
   event(room, 'STATION_RESULT_CONFIRMED', { stationId: room.stationResult.stationId, rankings });
 }
 
-function purchaseShopItem(room, player, itemId) {
+const CURRENCY_LABELS = { one: '壱', two: '弐', three: '参', five: '伍', seven: '漆' };
+
+function changeFor(amount) {
+  if (amount === 0) return { type: null, amount: 0, label: 'なし' };
+  const type = ({ 1: 'one', 2: 'two', 3: 'three' })[amount];
+  if (!type) throw new Error('この投入額ではおつりを返せません');
+  return { type, amount: 1, label: `${CURRENCY_LABELS[type]}×1` };
+}
+
+function purchaseShopItem(room, player, itemId, requestedPayment) {
   if (room.phase !== PHASE.FREE_TIME || room.stationIndex !== 0) throw new Error('第一ショップは第一地獄終了後の自由時間だけ利用できます');
   if (!room.timer || Date.now() >= room.timer.endsAt) throw new Error('ショップ購入受付は終了しました');
   const item = SHOP_ITEM_BY_ID[itemId];
   if (!item || item.shop !== 1) throw new Error('第一ショップの商品ではありません');
   if ((room.shopStock[item.id] || 0) < 1) throw new Error('他のプレイヤーが先に購入しました');
-  if (player.currency.one < item.payment.one) throw new Error(`壱の冥貨があと${item.payment.one - player.currency.one}枚必要です`);
+  const paymentAmount = Number(requestedPayment);
+  if (!Number.isInteger(paymentAmount) || paymentAmount < item.price || paymentAmount > 5) throw new Error(`投入額は${item.price}～5枚から選択してください`);
+  if (player.currency.one < paymentAmount) throw new Error(`壱の冥貨があと${paymentAmount - player.currency.one}枚必要です`);
+  const change = changeFor(paymentAmount - item.price);
   const transactionId = id();
-  const isFirstPurchase = !room.firstPurchaseCompleted;
-  player.currency.one -= item.payment.one;
-  player.currency[item.change.type] += item.change.amount;
+  const isPrimeChange = ['two', 'three', 'five', 'seven'].includes(change.type);
+  const isFirstPurchase = isPrimeChange && !room.firstPurchaseCompleted;
+  player.currency.one -= paymentAmount;
+  if (change.type) player.currency[change.type] += change.amount;
   player.shopInventory.push({ itemId: item.id, transactionId, used: false, acquiredAt: now() });
   room.shopStock[item.id] -= 1;
-  const transaction = { id: transactionId, participantId: player.participantId, playerNumber: player.playerNumber, itemId: item.id, payment: { ...item.payment }, change: { ...item.change }, cocofoliaApplied: false, createdAt: now() };
+  const transaction = { id: transactionId, participantId: player.participantId, playerNumber: player.playerNumber, itemId: item.id, payment: { one: paymentAmount }, change, cocofoliaApplied: false, createdAt: now() };
   room.purchaseTransactions.push(transaction);
-  room.firstPurchaseCompleted = true;
+  if (isPrimeChange) room.firstPurchaseCompleted = true;
   player.purchaseNotice = { transactionId, itemId: item.id, firstPurchase: isFirstPurchase };
   event(room, 'SHOP_PURCHASE_COMPLETED', { transactionId, itemId: item.id }, `private:${player.participantId}`);
+}
+
+function requireFreeTime(room) {
+  if (room.phase !== PHASE.FREE_TIME || !room.timer || Date.now() >= room.timer.endsAt) throw new Error('冥貨を譲渡できる自由時間ではありません');
+}
+
+function createTransferRequest(room, sender, action) {
+  requireFreeTime(room);
+  const recipient = room.players.find(player => player.participantId === action.recipientId);
+  if (!recipient || recipient === sender) throw new Error('自分以外の譲渡先を選択してください');
+  const currencyType = String(action.currencyType || '');
+  if (!CURRENCY_LABELS[currencyType]) throw new Error('冥貨種別が不正です');
+  const amount = Number(action.amount);
+  if (!Number.isInteger(amount) || amount < 1) throw new Error('譲渡枚数は1枚以上を指定してください');
+  const reserved = room.transferRequests.filter(item => item.senderId === sender.participantId && item.currencyType === currencyType && item.status === 'PENDING').reduce((sum, item) => sum + item.amount, 0);
+  if (sender.currency[currencyType] - reserved < amount) throw new Error('申請可能な所持冥貨が不足しています');
+  const transfer = { id: id(), senderId: sender.participantId, recipientId: recipient.participantId, currencyType, amount, status: 'PENDING', cocofoliaApplied: false, createdAt: now() };
+  room.transferRequests.push(transfer);
+  event(room, 'TRANSFER_REQUESTED', { transferId: transfer.id }, `private:${sender.participantId}`);
+}
+
+function transferById(room, transferId) {
+  const transfer = room.transferRequests.find(item => item.id === transferId);
+  if (!transfer) throw new Error('譲渡申請が見つかりません');
+  return transfer;
+}
+
+function approveTransfer(room, transferId) {
+  if (room.phase !== PHASE.FREE_TIME) throw new Error('自由時間中の譲渡申請ではありません');
+  const transfer = transferById(room, transferId);
+  if (transfer.status !== 'PENDING') throw new Error('未処理の譲渡申請ではありません');
+  const sender = room.players.find(player => player.participantId === transfer.senderId);
+  const recipient = room.players.find(player => player.participantId === transfer.recipientId);
+  if (!sender || !recipient || sender.currency[transfer.currencyType] < transfer.amount) throw new Error('譲渡可能な所持冥貨が不足しています');
+  sender.currency[transfer.currencyType] -= transfer.amount;
+  recipient.currency[transfer.currencyType] += transfer.amount;
+  transfer.status = 'CONFIRMED';
+  transfer.confirmedAt = now();
+  event(room, 'TRANSFER_CONFIRMED', { transferId: transfer.id }, 'gm');
+}
+
+function updateTransferStatus(room, transferId, status) {
+  const transfer = transferById(room, transferId);
+  if (transfer.status !== 'PENDING') throw new Error('未処理の譲渡申請ではありません');
+  transfer.status = status;
+  transfer.resolvedAt = now();
+  event(room, 'TRANSFER_REJECTED', { transferId: transfer.id }, 'gm');
 }
 
 function startNextStation(room) {
@@ -517,6 +599,14 @@ function nextTurn(room) {
 export function projectState(room, actor) {
   ensureRoomState(room);
   const isGm = actor.role === 'GM';
+  const visibleTransfers = room.transferRequests.filter(item => isGm || item.senderId === actor.participantId || item.recipientId === actor.participantId).map(item => ({
+    ...item,
+    currencyLabel: CURRENCY_LABELS[item.currencyType],
+    senderNumber: room.players.find(player => player.participantId === item.senderId)?.playerNumber,
+    senderName: room.players.find(player => player.participantId === item.senderId)?.name,
+    recipientNumber: room.players.find(player => player.participantId === item.recipientId)?.playerNumber,
+    recipientName: room.players.find(player => player.participantId === item.recipientId)?.name
+  }));
   const publicEvents = room.events.filter(item => item.visibility === 'public' || isGm || item.visibility === `private:${actor.participantId}`).slice(-100);
   return {
     code: room.code, testMode: Boolean(room.testMode), phase: room.phase, station: room.stationIndex >= 0 ? STATIONS[room.stationIndex] : null,
@@ -526,8 +616,9 @@ export function projectState(room, actor) {
     packs: PACKS.map(pack => ({ ...pack, cards: isGm || actor.packId === pack.id ? CARDS.filter(card => card.packId === pack.id) : undefined })), stations: STATIONS,
     testPlayers: isGm ? room.players.map(player => ({ ...privatePlayer(player, room), selection: player.selection, confirmed: player.confirmed })) : undefined,
     stationResult: room.stationResult,
-    shop: { items: SHOP_ITEMS.filter(item => item.shop === 1).map(item => ({ ...item, soldOut: (room.shopStock[item.id] || 0) < 1 })) },
+    shop: { items: SHOP_ITEMS.filter(item => item.shop === 1).map(({ payment, change, ...item }) => ({ ...item, soldOut: (room.shopStock[item.id] || 0) < 1 })) },
     purchaseTransactions: isGm ? room.purchaseTransactions.map(transaction => ({ ...transaction, playerName: room.players.find(player => player.participantId === transaction.participantId)?.name, itemName: SHOP_ITEM_BY_ID[transaction.itemId]?.name })) : undefined,
+    transferRequests: visibleTransfers,
     pendingCurrencyTransactions: isGm ? room.currencyTransactions.filter(transaction => !transaction.cocofoliaApplied) : undefined,
     revealedUsages: room.phase === PHASE.TURN_RESULT ? room.revealedUsages.map(use => { const card = CARDS.find(item => item.id === use.cardId); return { ...use, cardName: card?.name, category: card?.category, description: card?.description }; }) : [], events: publicEvents
   };

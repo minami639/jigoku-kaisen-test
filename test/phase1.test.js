@@ -241,7 +241,7 @@ test('first-shop purchases atomically exchange five one coins for item and prime
   for (const [itemId, changeType] of cases) {
     const room = firstShopRoom();
     const player = room.players[0];
-    applyAction(room, player, { type: 'BUY_SHOP_ITEM', itemId });
+    applyAction(room, player, { type: 'BUY_SHOP_ITEM', itemId, paymentAmount: 5 });
     assert.equal(player.currency.one, 0);
     assert.equal(player.currency[changeType], 1);
     assert.equal(player.shopInventory[0].itemId, itemId);
@@ -254,9 +254,9 @@ test('first-shop purchases atomically exchange five one coins for item and prime
 test('first shop rejects insufficient funds and resolves stock races without revealing buyer', () => {
   const room = firstShopRoom();
   room.players[0].currency.one = 4;
-  assert.throws(() => applyAction(room, room.players[0], { type: 'BUY_SHOP_ITEM', itemId: 'will-o-wisp-amulet' }), /あと1枚/);
-  applyAction(room, room.players[1], { type: 'BUY_SHOP_ITEM', itemId: 'will-o-wisp-amulet' });
-  assert.throws(() => applyAction(room, room.players[2], { type: 'BUY_SHOP_ITEM', itemId: 'will-o-wisp-amulet' }), /他のプレイヤーが先に購入/);
+  assert.throws(() => applyAction(room, room.players[0], { type: 'BUY_SHOP_ITEM', itemId: 'will-o-wisp-amulet', paymentAmount: 5 }), /あと1枚/);
+  applyAction(room, room.players[1], { type: 'BUY_SHOP_ITEM', itemId: 'will-o-wisp-amulet', paymentAmount: 5 });
+  assert.throws(() => applyAction(room, room.players[2], { type: 'BUY_SHOP_ITEM', itemId: 'will-o-wisp-amulet', paymentAmount: 5 }), /他のプレイヤーが先に購入/);
   const otherView = projectState(room, room.players[2]);
   assert.equal(otherView.shop.items.find(item => item.id === 'will-o-wisp-amulet').soldOut, true);
   assert.equal(otherView.purchaseTransactions, undefined);
@@ -268,8 +268,8 @@ test('first shop rejects insufficient funds and resolves stock races without rev
 
 test('GM can see and acknowledge CCF purchase work while first-purchase scene occurs once', () => {
   const room = firstShopRoom();
-  applyAction(room, room.players[0], { type: 'BUY_SHOP_ITEM', itemId: 'will-o-wisp-amulet' });
-  applyAction(room, room.players[1], { type: 'BUY_SHOP_ITEM', itemId: 'protective-rosary' });
+  applyAction(room, room.players[0], { type: 'BUY_SHOP_ITEM', itemId: 'will-o-wisp-amulet', paymentAmount: 5 });
+  applyAction(room, room.players[1], { type: 'BUY_SHOP_ITEM', itemId: 'protective-rosary', paymentAmount: 5 });
   assert.equal(room.players[0].purchaseNotice.firstPurchase, true);
   assert.equal(room.players[1].purchaseNotice.firstPurchase, false);
   const gmView = projectState(room, room.gm);
@@ -282,13 +282,42 @@ test('GM can see and acknowledge CCF purchase work while first-purchase scene oc
 
 test('free-time readiness never auto-advances and unused shop cards persist into ice', () => {
   const room = firstShopRoom();
-  applyAction(room, room.players[0], { type: 'BUY_SHOP_ITEM', itemId: 'red-bandage' });
+  applyAction(room, room.players[0], { type: 'BUY_SHOP_ITEM', itemId: 'red-bandage', paymentAmount: 5 });
   room.players.forEach(player => applyAction(room, player, { type: 'SET_FREE_TIME_READY', ready: true }));
   assert.equal(room.phase, 'FREE_TIME');
   applyAction(room, room.gm, { type: 'START_NEXT_STATION' });
   assert.equal(room.phase, 'TURN_SELECTION');
   assert.equal(room.stationIndex, 1);
   assert.equal(room.players[0].shopInventory[0].used, false);
+});
+
+test('first-shop buyer chooses the one-coin payment amount and receives only the resulting change', () => {
+  const exactRoom = firstShopRoom();
+  applyAction(exactRoom, exactRoom.players[0], { type: 'BUY_SHOP_ITEM', itemId: 'will-o-wisp-amulet', paymentAmount: 3 });
+  assert.equal(exactRoom.players[0].currency.one, 2);
+  assert.equal(exactRoom.purchaseTransactions[0].change.amount, 0);
+
+  const overpayRoom = firstShopRoom();
+  applyAction(overpayRoom, overpayRoom.players[0], { type: 'BUY_SHOP_ITEM', itemId: 'protective-rosary', paymentAmount: 4 });
+  assert.equal(overpayRoom.players[0].currency.one, 1);
+  assert.equal(overpayRoom.players[0].currency.two, 1);
+  assert.equal(overpayRoom.purchaseTransactions[0].payment.one, 4);
+});
+
+test('currency transfer requires GM confirmation and tracks CCF reflection', () => {
+  const room = firstShopRoom();
+  const [sender, recipient, outsider] = room.players;
+  applyAction(room, sender, { type: 'CREATE_TRANSFER_REQUEST', recipientId: recipient.participantId, currencyType: 'one', amount: 2 });
+  assert.equal(sender.currency.one, 5);
+  assert.equal(projectState(room, outsider).transferRequests.length, 0);
+  assert.equal(projectState(room, recipient).transferRequests.length, 1);
+  applyAction(room, room.gm, { type: 'APPROVE_TRANSFER', transferId: room.transferRequests[0].id });
+  assert.equal(sender.currency.one, 3);
+  assert.equal(recipient.currency.one, 7);
+  assert.equal(room.transferRequests[0].status, 'CONFIRMED');
+  assert.equal(room.transferRequests[0].cocofoliaApplied, false);
+  applyAction(room, room.gm, { type: 'MARK_TRANSFER_APPLIED', transferId: room.transferRequests[0].id });
+  assert.equal(room.transferRequests[0].cocofoliaApplied, true);
 });
 
 test('third scorch result advances through station result and GM-started free time', () => {
