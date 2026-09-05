@@ -376,6 +376,20 @@ test('Blood Hell introduction is available and Blood Tide adds one to real recov
   assert.ok(room.events.some(item => item.type === 'HEAL' && item.payload.cardId === 'healing-blood' && item.payload.amount === 3));
 });
 
+test('Hunger Hell introduction is available before its first turn', () => {
+  const room = createTestRoom();
+  applyAction(room, room.gm, { type: 'TEST_JUMP_PHASE', phase: 'STATION_INTRODUCTION', stationIndex: 4, stationTurn: 0 });
+  const introduction = projectState(room, room.players[0]).stationIntroduction;
+  assert.equal(introduction.title, '第五地獄へ');
+  assert.match(introduction.lines.join('\\n'), /駅固有效果：強欲/);
+  assert.match(introduction.lines.join('\\n'), /COOLDOWN_EXTENSION/);
+
+  while (room.phase === 'STATION_INTRODUCTION') applyAction(room, room.gm, { type: 'ADVANCE_STATION_INTRODUCTION' });
+  assert.equal(room.phase, 'TURN_SELECTION');
+  assert.equal(room.stationTurn, 1);
+  assert.equal(room.globalTurnIndex, 13);
+});
+
 test('each shop requires its fixed one-coin deposit and grants its defined change', () => {
   const firstRoom = firstShopRoom();
   assert.throws(() => applyAction(firstRoom, firstRoom.players[0], { type: 'BUY_SHOP_ITEM', itemId: 'will-o-wisp-amulet', paymentAmount: 3 }), /壱×5/);
