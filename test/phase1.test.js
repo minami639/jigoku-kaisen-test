@@ -92,3 +92,14 @@ test('single-player test room lets GM assign seven unique packs and autofill a t
   applyAction(room, room.gm, { type: 'REVEAL_AND_RESOLVE' });
   assert.equal(room.phase, 'TURN_RESULT');
 });
+
+test('test-room GM can inspect every PL view without exposing it to PL clients', () => {
+  const room = createTestRoom();
+  room.players.forEach((player, index) => applyAction(room, room.gm, { type: 'TEST_SELECT_PACK', participantId: player.participantId, packId: PACKS[index].id }));
+  const gmView = projectState(room, room.gm);
+  const plView = projectState(room, room.players[0]);
+  assert.equal(gmView.testPlayers.length, 7);
+  assert.equal(gmView.testPlayers[0].cards.length, 5);
+  assert.equal(plView.testPlayers, undefined);
+  assert.equal(plView.packs.find(pack => pack.id !== room.players[0].packId).cards, undefined);
+});

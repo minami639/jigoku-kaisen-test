@@ -12,7 +12,7 @@ npm.cmd start
 
 ブラウザで `http://localhost:3000` を開きます。GMが表示されたルームコードをPLへ共有し、合計7人が参加するとパック選択へ進めます。別ブラウザまたはプライベートウィンドウを使うと、同じ端末でも複数参加者を確認できます。サーバーは `PORT`（既定値3000）と `HOST`（既定値 `0.0.0.0`）を利用します。
 
-一人で確認する場合は、乗車口の「テストルームを作成（PL7人自動参加）」を押します。GM画面でPL1～PL7のパックを自分で選び、「第一・焦熱地獄を開始」へ進みます。その後は「全PLを自動選択・確定」→「一斉公開して処理」でターンを進められます。テストルームAPIはローカルでは有効ですが、`NODE_ENV=production` では既定で無効です。明示的に `ENABLE_TEST_ROOMS=true` を設定した公開環境では誰でもテストルームを作成できるため、通常の公開サービスでは有効にしないでください。
+一人で確認する場合は、乗車口の「テストルームを作成（PL7人自動参加）」を押します。GM画面でPL1～PL7のパックを自分で選び、「第一・焦熱地獄を開始」へ進みます。その後は「全PLを自動選択・確定」→「一斉公開して処理」でターンを進められます。「他のユーザー画面」から各PLの画面を閲覧専用で確認できます。公開テスト環境では `ENABLE_TEST_ROOMS=true` のため、URLを知る人は誰でも互いに分離されたテストルームを作成できます。
 
 ## 確認
 
@@ -33,7 +33,7 @@ npm.cmd test
 - Start Command: `npm start`
 - Health Check Path: `/healthz`
 - `NODE_ENV=production`
-- `ENABLE_TEST_ROOMS=false`
+- `ENABLE_TEST_ROOMS=true`（公開テスト期間のみ）
 - `DATA_FILE=/tmp/jigoku-kaisen/rooms.json`
 
 `PORT` はRenderが自動設定するため、手動設定しません。秘密値は `render.yaml` やGitへ記録せず、必要になった時点でRender DashboardのEnvironmentへ登録してください。

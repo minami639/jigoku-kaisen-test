@@ -11,6 +11,6 @@ services:
       - key: NODE_ENV
         value: production
       - key: ENABLE_TEST_ROOMS
-        value: "false"
+        value: "true"
       - key: DATA_FILE
         value: /tmp/jigoku-kaisen/rooms.json
