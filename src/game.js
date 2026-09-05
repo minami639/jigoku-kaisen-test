@@ -201,10 +201,48 @@ export function applyAction(room, actor, action) {
       event(room, 'TEST_PACKS_AUTOFILLED', { assignments: room.players.map(player => ({ playerNumber: player.playerNumber, packId: player.packId })) }, 'gm');
       break;
     }
+    case 'TEST_JUMP_PHASE':
+      requireGm(actor);
+      if (!room.testMode) throw new Error('テストルーム専用操作です');
+      jumpTestPhase(room, action);
+      break;
     default: throw new Error('未対応の操作です');
   }
   room.updatedAt = now();
   return room;
+}
+
+function jumpTestPhase(room, action) {
+  const destination = String(action.phase || '');
+  if (![PHASE.INTRODUCTION, PHASE.SELF_INTRODUCTION, PHASE.PACK_SELECTION, PHASE.TURN_SELECTION, PHASE.TURN_RESULT].includes(destination)) throw new Error('移動先フェーズが不正です');
+  room.revealedUsages = [];
+  for (const player of room.players) { player.selection = null; player.confirmed = false; }
+
+  if (destination === PHASE.INTRODUCTION) {
+    room.phase = destination; room.stationIndex = -1; room.stationTurn = 0; room.globalTurnIndex = 0; room.timer = null; room.introductionStep = 1;
+  } else if (destination === PHASE.SELF_INTRODUCTION) {
+    room.stationIndex = -1; room.stationTurn = 0; room.globalTurnIndex = 0;
+    startSelfIntroduction(room);
+  } else if (destination === PHASE.PACK_SELECTION) {
+    room.phase = destination; room.stationIndex = -1; room.stationTurn = 0; room.globalTurnIndex = 0; room.timer = null;
+  } else {
+    const stationIndex = Number(action.stationIndex);
+    const station = STATIONS[stationIndex];
+    const stationTurn = Number(action.stationTurn);
+    if (!station || !Number.isInteger(stationTurn) || stationTurn < 1 || stationTurn > station.turnCount) throw new Error('駅またはターンが不正です');
+    ensureTestPacks(room);
+    room.phase = destination; room.stationIndex = stationIndex; room.stationTurn = stationTurn;
+    room.globalTurnIndex = STATIONS.slice(0, stationIndex).reduce((sum, item) => sum + item.turnCount, 0) + stationTurn;
+    room.timer = destination === PHASE.TURN_SELECTION ? { startedAt: Date.now(), endsAt: Date.now() + station.turnSeconds * 1000 } : null;
+  }
+  event(room, 'TEST_PHASE_JUMPED', { phase: room.phase, stationIndex: room.stationIndex, stationTurn: room.stationTurn }, 'gm');
+}
+
+function ensureTestPacks(room) {
+  const assigned = room.players.map(player => player.packId);
+  if (assigned.every(packId => PACK_BY_ID[packId]) && new Set(assigned).size === room.players.length) return;
+  room.players.forEach((player, index) => { player.packId = PACKS[index].id; });
+  event(room, 'TEST_PACKS_ASSIGNED_FOR_PHASE_JUMP', {}, 'gm');
 }
 
 function startSelfIntroduction(room) {
@@ -348,7 +386,7 @@ export function projectState(room, actor) {
     stationTurn: room.stationTurn, globalTurnIndex: room.globalTurnIndex, timer: room.timer, introductionStep: room.introductionStep || 0,
     me: actor.role === 'GM' ? { participantId: actor.participantId, role: 'GM', name: actor.name } : privatePlayer(actor, room),
     players: room.players.map(player => ({ participantId: player.participantId, playerNumber: player.playerNumber, name: player.name, hp: player.hp, isDeadState: player.isDeadState, packId: room.phase === PHASE.PACK_SELECTION && !isGm ? null : player.packId, confirmed: player.confirmed, selfIntroductionComplete: Boolean(player.selfIntroductionComplete), selection: isGm || player.participantId === actor.participantId ? player.selection : undefined })),
-    packs: PACKS.map(pack => ({ ...pack, cards: isGm || actor.packId === pack.id ? CARDS.filter(card => card.packId === pack.id) : undefined })),
+    packs: PACKS.map(pack => ({ ...pack, cards: isGm || actor.packId === pack.id ? CARDS.filter(card => card.packId === pack.id) : undefined })), stations: STATIONS,
     testPlayers: isGm && room.testMode ? room.players.map(player => ({ ...privatePlayer(player, room), selection: player.selection, confirmed: player.confirmed })) : undefined,
     revealedUsages: room.phase === PHASE.TURN_RESULT ? room.revealedUsages : [], events: publicEvents
   };

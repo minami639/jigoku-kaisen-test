@@ -150,3 +150,21 @@ test('test-room GM can automatically assign all seven packs without duplication'
   assert.equal(new Set(room.players.map(player => player.packId)).size, 7);
   assert.equal(room.events.at(-1).type, 'TEST_PACKS_AUTOFILLED');
 });
+
+test('test GM can jump freely between phases and station turns', () => {
+  const room = createTestRoom();
+  applyAction(room, room.gm, { type: 'TEST_JUMP_PHASE', phase: 'TURN_SELECTION', stationIndex: 4, stationTurn: 3 });
+  assert.equal(room.phase, 'TURN_SELECTION');
+  assert.equal(room.stationIndex, 4);
+  assert.equal(room.stationTurn, 3);
+  assert.equal(room.globalTurnIndex, 15);
+  assert.equal(new Set(room.players.map(player => player.packId)).size, 7);
+
+  applyAction(room, room.gm, { type: 'TEST_JUMP_PHASE', phase: 'PACK_SELECTION' });
+  assert.equal(room.phase, 'PACK_SELECTION');
+  assert.equal(room.stationIndex, -1);
+  assert.equal(room.globalTurnIndex, 0);
+
+  const normalRoom = createRoom();
+  assert.throws(() => applyAction(normalRoom, normalRoom.gm, { type: 'TEST_JUMP_PHASE', phase: 'INTRODUCTION' }), /テストルーム専用/);
+});
