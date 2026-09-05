@@ -60,3 +60,15 @@
 /* 導入文は内容量で横幅が変わらない固定の読み上げ枠にする */
 .script,.intro-actions{width:min(780px,calc(100vw - 24px))}
 .gm-progress>.script,.gm-progress>.intro-actions{justify-self:center}
+
+/* ヘッダー題字：列車の行先標を思わせる、静かな和風ロゴ */
+.brand-lockup{gap:3px}
+.brand-lockup>.eyebrow{margin:0 0 2px 43px;color:#d7ad61;font-size:9px;font-weight:800;letter-spacing:.28em;text-shadow:none}
+.brand-title{gap:12px;margin:0;padding:0 0 10px;font-family:"Yu Mincho","Hiragino Mincho ProN",serif;font-size:clamp(30px,4vw,44px);font-weight:900;letter-spacing:.15em;line-height:1;text-shadow:0 2px 0 #080605,0 8px 22px #000}
+.brand-title::after{left:43px;right:0;bottom:1px;height:4px;border:0;background:linear-gradient(90deg,#b34335 0 12%,#d9b367 12% 88%,#b34335 88% 100%);box-shadow:0 3px 13px #b3433555;transform:none}
+.brand-route-mark{position:relative;display:grid;place-items:center;width:31px;height:31px;flex:none;border:1px solid #b58c4d;border-radius:2px;background:linear-gradient(145deg,#281612,#0e0a09 72%);box-shadow:inset 0 0 0 3px #120c0a,0 4px 14px #0009}
+.brand-route-mark::before{content:"";width:15px;height:19px;border-left:2px solid #d85a46;border-right:2px solid #d85a46;transform:perspective(28px) rotateX(15deg)}
+.brand-route-mark::after{content:"";position:absolute;width:5px;height:5px;border-radius:50%;background:#efc66e;box-shadow:0 0 8px #efc66ecc}
+.brand-name{background:linear-gradient(180deg,#fff9eb 0,#f4eadc 56%,#cfb9a6 100%);-webkit-background-clip:text;background-clip:text;color:transparent}
+.brand-name::before{content:none}
+@media(max-width:720px){.brand-title{gap:8px;padding-bottom:7px;font-size:25px}.brand-route-mark{width:25px;height:25px}.brand-route-mark::before{width:12px;height:15px}.brand-route-mark::after{width:4px;height:4px}.brand-title::after{left:33px;bottom:0}.brand-lockup>.eyebrow{margin-left:34px}}
