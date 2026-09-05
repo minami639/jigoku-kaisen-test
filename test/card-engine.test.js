@@ -11,6 +11,16 @@ function roomAt(stationIndex, stationTurn = 1) {
   return room;
 }
 
+function completeRewardSyncAndStartFreeTime(room) {
+  applyAction(room, room.gm, { type: 'START_REWARD_NARRATION' });
+  while (room.phase === 'REWARD_NARRATION') applyAction(room, room.gm, { type: 'ADVANCE_REWARD_NARRATION' });
+  for (const transaction of room.currencyTransactions.filter(item => item.stationId === room.stationResult.stationId && !item.cocofoliaApplied)) {
+    applyAction(room, room.gm, { type: 'MARK_CURRENCY_TRANSACTION_APPLIED', transactionId: transaction.id });
+  }
+  applyAction(room, room.gm, { type: 'START_FREE_TIME' });
+  while (room.phase === 'FREE_TIME_INTRO') applyAction(room, room.gm, { type: 'ADVANCE_FREE_TIME_INTRODUCTION' });
+}
+
 function targetFor(room, index) {
   return room.players[(index + 1) % room.players.length].participantId;
 }
@@ -140,7 +150,7 @@ test('25 turns complete without a card processing error', () => {
     applyAction(room, room.gm, { type: 'TEST_ACK_ALL_RESULTS' });
     applyAction(room, room.gm, { type: 'NEXT_TURN' });
     if (room.phase === 'STATION_RESULT') {
-      applyAction(room, room.gm, { type: 'START_FREE_TIME' });
+      completeRewardSyncAndStartFreeTime(room);
       applyAction(room, room.gm, { type: 'START_NEXT_STATION' });
       while (room.phase === 'STATION_INTRODUCTION') applyAction(room, room.gm, { type: 'ADVANCE_STATION_INTRODUCTION' });
     }
@@ -162,7 +172,7 @@ test('dead state is retained within a station and resets only at the next-statio
   room.players[1].stationStats.reachedZero = true;
   room.players.forEach(player => { player.confirmed = true; });
   applyAction(room, room.gm, { type: 'NEXT_TURN' });
-  applyAction(room, room.gm, { type: 'START_FREE_TIME' });
+  completeRewardSyncAndStartFreeTime(room);
   applyAction(room, room.gm, { type: 'START_NEXT_STATION' });
   assert.equal(room.players[0].isDeadState, false, '駅終了時HP1以上なら次駅で復帰');
   assert.equal(room.players[1].isDeadState, true, '駅終了時HP0なら亡者を維持');

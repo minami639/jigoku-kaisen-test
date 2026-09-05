@@ -3,7 +3,7 @@ import { CARDS, CARD_BY_ID, PACKS, PACK_BY_ID, SHOP_BY_STATION_ID, SHOP_ITEMS, S
 import { GAME_GUIDE } from './game-guide.js';
 import { stationIntroductionFor } from './station-introductions.js';
 
-export const PHASE = Object.freeze({ LOBBY: 'LOBBY', INTRODUCTION: 'INTRODUCTION', SELF_INTRODUCTION: 'SELF_INTRODUCTION', GAME_GUIDE: 'GAME_GUIDE', PACK_SELECTION: 'PACK_SELECTION', TURN_SELECTION: 'TURN_SELECTION', TURN_RESULT: 'TURN_RESULT', STATION_RESULT: 'STATION_RESULT', FREE_TIME: 'FREE_TIME', STATION_INTRODUCTION: 'STATION_INTRODUCTION' });
+export const PHASE = Object.freeze({ LOBBY: 'LOBBY', INTRODUCTION: 'INTRODUCTION', SELF_INTRODUCTION: 'SELF_INTRODUCTION', GAME_GUIDE: 'GAME_GUIDE', PACK_SELECTION: 'PACK_SELECTION', TURN_SELECTION: 'TURN_SELECTION', TURN_RESULT: 'TURN_RESULT', STATION_RESULT: 'STATION_RESULT', REWARD_NARRATION: 'REWARD_NARRATION', CURRENCY_SYNC_WAIT: 'CURRENCY_SYNC_WAIT', FREE_TIME_INTRO: 'FREE_TIME_INTRO', FREE_TIME: 'FREE_TIME', STATION_INTRODUCTION: 'STATION_INTRODUCTION' });
 const token = () => crypto.randomBytes(24).toString('base64url');
 const id = () => crypto.randomUUID();
 const now = () => new Date().toISOString();
@@ -18,7 +18,7 @@ export function createRoom(gmName = 'GM') {
   const gm = { participantId: id(), authToken: token(), role: 'GM', name: gmName.trim() || 'GM' };
   const room = {
     id: id(), code, phase: PHASE.LOBBY, gm, players: [], stationIndex: -1, stationTurn: 0,
-    globalTurnIndex: 0, timer: null, revealedUsages: [], stationResult: null, activeStationEffectIds: [], shopStock: Object.fromEntries(SHOP_ITEMS.map(item => [item.id, item.stock])), purchaseTransactions: [], transferRequests: [], firstPurchaseCompleted: false, events: [], createdAt: now(), updatedAt: now()
+    globalTurnIndex: 0, timer: null, revealedUsages: [], stationResult: null, rewardNarrationStep: 0, freeTimeIntroductionStep: 0, activeStationEffectIds: [], shopStock: Object.fromEntries(SHOP_ITEMS.map(item => [item.id, item.stock])), currencyTransactions: [], purchaseTransactions: [], transferRequests: [], firstPurchaseCompleted: false, events: [], createdAt: now(), updatedAt: now()
   };
   event(room, 'ROOM_CREATED', { gmName: gm.name });
   return room;
@@ -69,6 +69,8 @@ function ensureRoomState(room) {
   room.currencyTransactions ||= [];
   room.firstPurchaseCompleted ||= false;
   room.stationIntroductionStep ||= 0;
+  room.rewardNarrationStep ||= 0;
+  room.freeTimeIntroductionStep ||= 0;
   room.activeStationEffectIds ||= [];
   room.gameGuideStep ||= 0;
   for (const transaction of room.purchaseTransactions) {
@@ -208,13 +210,24 @@ export function applyAction(room, actor, action) {
       if (room.players.some(player => !player.confirmed)) throw new Error('全PLの結果確認完了が必要です');
       nextTurn(room);
       break;
+    case 'START_REWARD_NARRATION':
+      requireGm(actor);
+      if (room.phase !== PHASE.STATION_RESULT || room.stationIndex >= STATIONS.length - 1) throw new Error('報酬発表を開始できる駅結果ではありません');
+      room.phase = PHASE.REWARD_NARRATION;
+      room.rewardNarrationStep = 1;
+      event(room, 'STATION_REWARD_NARRATION_STARTED', { stationId: STATIONS[room.stationIndex].id });
+      break;
+    case 'ADVANCE_REWARD_NARRATION':
+      requireGm(actor);
+      advanceRewardNarration(room);
+      break;
     case 'START_FREE_TIME':
       requireGm(actor);
-      if (room.phase !== PHASE.STATION_RESULT || room.stationIndex >= STATIONS.length - 1) throw new Error('自由時間を開始できる駅結果ではありません');
-      room.phase = PHASE.FREE_TIME;
-      room.timer = { startedAt: Date.now(), endsAt: Date.now() + 300_000 };
-      room.players.forEach(player => { player.freeTimeReady = false; player.confirmed = false; });
-      event(room, 'FREE_TIME_STARTED', { stationId: STATIONS[room.stationIndex].id, seconds: 300 });
+      startFreeTimeIntroduction(room);
+      break;
+    case 'ADVANCE_FREE_TIME_INTRODUCTION':
+      requireGm(actor);
+      advanceFreeTimeIntroduction(room);
       break;
     case 'BUY_SHOP_ITEM':
       requirePlayer(actor);
@@ -251,6 +264,16 @@ export function applyAction(room, actor, action) {
       transaction.currencyCocofoliaApplied = true;
       transaction.currencyAppliedAt = now();
       event(room, 'PURCHASE_CURRENCY_COCOFOLIA_APPLIED', { transactionId: transaction.id }, 'gm');
+      break;
+    }
+    case 'MARK_CURRENCY_TRANSACTION_APPLIED': {
+      requireGm(actor);
+      markCurrencyTransactionApplied(room, action.transactionId);
+      break;
+    }
+    case 'MARK_PLAYER_STATION_REWARDS_APPLIED': {
+      requireGm(actor);
+      markPlayerStationRewardsApplied(room, action.participantId);
       break;
     }
     case 'APPROVE_TRANSFER':
@@ -454,6 +477,8 @@ function startFirstStation(room) {
   if (new Set(room.players.map(p => p.packId)).size !== 7) throw new Error('カードパックは重複できません');
   room.stationIndex = 0; room.stationTurn = 0; room.globalTurnIndex = 0; room.phase = PHASE.STATION_INTRODUCTION;
   room.timer = null;
+  room.rewardNarrationStep = 0;
+  room.freeTimeIntroductionStep = 0;
   room.activeStationEffectIds = [];
   for (const p of room.players) { p.confirmed = false; p.selection = null; p.stationStats = freshStats(); p.isDeadState = false; p.turnStartDeadState = false; }
   prepareStationStart(room);
@@ -1107,6 +1132,8 @@ function resolveTurn(room) {
 }
 
 function finishStation(room) {
+  const station = STATIONS[room.stationIndex];
+  const rewardFlow = station.rewardFlow || {};
   const eligible = room.players.filter(player => !player.stationStats.reachedZero);
   const sorted = [...eligible].sort((a, b) => b.stationStats.stationScore - a.stationStats.stationScore || b.hp - a.hp || b.stationStats.damageDealt - a.stationStats.damageDealt || b.stationStats.support - a.stationStats.support || a.stationStats.damageTaken - b.stationStats.damageTaken);
   const rewardByRank = { 1: 3, 2: 2, 3: 2, 4: 1, 5: 1 };
@@ -1115,20 +1142,155 @@ function finishStation(room) {
     const signature = [player.stationStats.stationScore, player.hp, player.stationStats.damageDealt, player.stationStats.support, player.stationStats.damageTaken].join(':');
     const rank = previous?.signature === signature ? previous.rank : index + 1;
     const reward = rewardByRank[rank] || 0;
-    if (reward) {
-      player.currency.one += reward;
-      room.currencyTransactions.push({ id: id(), type: 'STATION_REWARD', participantId: player.participantId, stationId: STATIONS[room.stationIndex].id, currency: 'one', amount: reward, cocofoliaApplied: false, createdAt: now() });
-    }
+    awardStationCurrency(room, player, 'RANK_REWARD', '順位報酬', reward);
     previous = { signature, rank };
     return { participantId: player.participantId, playerNumber: player.playerNumber, rank, reward, stationScore: player.stationStats.stationScore, hp: player.hp };
   });
-  room.stationResult = { stationId: STATIONS[room.stationIndex].id, rankings, excludedPlayerNumbers: room.players.filter(player => player.stationStats.reachedZero).map(player => player.playerNumber) };
+  const supportConfig = rewardFlow.supportAward;
+  const supportCandidates = supportConfig ? room.players.filter(player => player.stationStats.support >= supportConfig.minimum) : [];
+  const maxSupport = supportCandidates.length ? Math.max(...supportCandidates.map(player => player.stationStats.support)) : 0;
+  const supportAwardees = supportCandidates.filter(player => player.stationStats.support === maxSupport);
+  for (const player of supportAwardees) awardStationCurrency(room, player, 'SUPPORT_AWARD', '支援賞', supportConfig.amount);
+
+  const specialConfig = rewardFlow.specialBonus;
+  const specialAwardees = specialConfig ? room.players.filter(player => !player.stationStats.reachedZero && stationSpecialSatisfied(player, specialConfig)) : [];
+  for (const player of specialAwardees) awardStationCurrency(room, player, 'SPECIAL_BONUS', '特殊ボーナス', specialConfig.amount);
+
+  const rankById = new Map(rankings.map(entry => [entry.participantId, entry]));
+  const rewardSummary = room.players.map(player => {
+    const rank = rankById.get(player.participantId);
+    const rankReward = rank?.reward || 0;
+    const supportAward = supportAwardees.includes(player) ? supportConfig.amount : 0;
+    const specialBonus = specialAwardees.includes(player) ? specialConfig.amount : 0;
+    return { participantId: player.participantId, playerNumber: player.playerNumber, rank: rank?.rank || null, rankReward, supportAward, specialBonus, totalOne: rankReward + supportAward + specialBonus };
+  });
+  room.stationResult = {
+    stationId: station.id,
+    rankings,
+    excludedPlayerNumbers: room.players.filter(player => player.stationStats.reachedZero).map(player => player.playerNumber),
+    supportAward: supportConfig ? { minimum: supportConfig.minimum, amount: supportConfig.amount, winnerIds: supportAwardees.map(player => player.participantId) } : null,
+    specialBonus: specialConfig ? { id: specialConfig.id, condition: specialConfig.condition, amount: specialConfig.amount, winnerIds: specialAwardees.map(player => player.participantId) } : null,
+    rewardSummary
+  };
   room.phase = PHASE.STATION_RESULT;
   room.timer = null;
   event(room, 'STATION_RESULT_CONFIRMED', { stationId: room.stationResult.stationId, rankings });
 }
 
 const CURRENCY_LABELS = { one: '壱', two: '弐', three: '参', five: '伍', seven: '漆' };
+
+function stationSpecialSatisfied(player, special) {
+  if (special.evaluator === 'DAMAGE_DEALT_AT_LEAST') return player.stationStats.damageDealt >= special.minimum;
+  return false;
+}
+
+function awardStationCurrency(room, player, type, label, amount) {
+  if (!amount) return;
+  player.currency.one += amount;
+  room.currencyTransactions.push({ id: id(), type, label, participantId: player.participantId, stationId: STATIONS[room.stationIndex].id, currency: 'one', amount, cocofoliaApplied: false, createdAt: now() });
+}
+
+function stationRewardNarration(room) {
+  const station = STATIONS[room.stationIndex];
+  const result = room.stationResult;
+  const playerName = participantId => {
+    const player = room.players.find(item => item.participantId === participantId);
+    return player ? `PL${player.playerNumber} ${player.name}` : '該当者なし';
+  };
+  const rankingLines = result.rankings.length ? result.rankings.map(entry => `${entry.rank}位：${playerName(entry.participantId)}`) : ['順位対象者はいません。'];
+  const rankRewardLines = result.rewardSummary.filter(entry => entry.rankReward > 0).map(entry => `${playerName(entry.participantId)}：壱×${entry.rankReward}`);
+  const supportWinners = result.supportAward?.winnerIds || [];
+  const specialWinners = result.specialBonus?.winnerIds || [];
+  return {
+    title: `${station.name} 報酬発表`,
+    lines: [
+      `「${station.name}、これにて終了で〜す！」`,
+      '「ではでは、駅順位の発表で〜す！」',
+      ...rankingLines,
+      '「続いて、順位報酬で〜す！」',
+      ...(rankRewardLines.length ? rankRewardLines : ['順位報酬の獲得者はいません。']),
+      '「支援賞の発表で〜す！」',
+      ...(supportWinners.length ? supportWinners.map(playerName).map(name => `${name}：壱×${result.supportAward.amount}`) : ['支援賞の獲得者はいません。']),
+      '「今回の隠し特殊条件を公開しま〜す！」',
+      result.specialBonus ? `「${result.specialBonus.condition}」` : '「今回の駅の特殊条件は設定されていません。」',
+      ...(result.specialBonus ? (specialWinners.length ? specialWinners.map(playerName).map(name => `${name}：壱×${result.specialBonus.amount}`) : ['特殊ボーナスの達成者はいません。']) : []),
+      '「最後に、今回の獲得冥貨で〜す！」',
+      ...result.rewardSummary.map(entry => `${playerName(entry.participantId)}：壱×${entry.totalOne}`)
+    ]
+  };
+}
+
+function freeTimeNarration(room) {
+  const station = STATIONS[room.stationIndex];
+  return {
+    title: `${station.name} 自由時間`,
+    lines: station.rewardFlow?.freeTimeLines || ['「冥貨もちゃんと配り終わりましたねぇ！」', '「それでは、5分間の自由時間で〜す！」']
+  };
+}
+
+function advanceRewardNarration(room) {
+  if (room.phase !== PHASE.REWARD_NARRATION) throw new Error('報酬発表中ではありません');
+  const narration = stationRewardNarration(room);
+  if (room.rewardNarrationStep < narration.lines.length) {
+    room.rewardNarrationStep += 1;
+    event(room, 'STATION_REWARD_NARRATION_ADVANCED', { stationId: STATIONS[room.stationIndex].id, step: room.rewardNarrationStep }, 'gm');
+    return;
+  }
+  room.phase = PHASE.CURRENCY_SYNC_WAIT;
+  room.rewardNarrationStep = 0;
+  room.timer = null;
+  event(room, 'CURRENCY_SYNC_WAIT_STARTED', { stationId: STATIONS[room.stationIndex].id });
+}
+
+function pendingStationCurrencyTransactions(room) {
+  const stationId = STATIONS[room.stationIndex]?.id;
+  return room.currencyTransactions.filter(transaction => transaction.stationId === stationId && !transaction.cocofoliaApplied);
+}
+
+function markCurrencyTransactionApplied(room, transactionId) {
+  if (room.phase !== PHASE.CURRENCY_SYNC_WAIT) throw new Error('駅報酬の反映待機中ではありません');
+  const transaction = room.currencyTransactions.find(item => item.id === transactionId && item.stationId === STATIONS[room.stationIndex]?.id);
+  if (!transaction) throw new Error('今回の駅報酬が見つかりません');
+  transaction.cocofoliaApplied = true;
+  transaction.cocofoliaAppliedAt = now();
+  event(room, 'STATION_REWARD_COCOFOLIA_APPLIED', { transactionId: transaction.id, stationId: transaction.stationId }, 'gm');
+}
+
+function markPlayerStationRewardsApplied(room, participantId) {
+  if (room.phase !== PHASE.CURRENCY_SYNC_WAIT) throw new Error('駅報酬の反映待機中ではありません');
+  const transactions = room.currencyTransactions.filter(item => item.stationId === STATIONS[room.stationIndex]?.id && item.participantId === participantId);
+  if (!transactions.length) throw new Error('このPLに今回の報酬はありません');
+  for (const transaction of transactions) {
+    transaction.cocofoliaApplied = true;
+    transaction.cocofoliaAppliedAt = now();
+  }
+  event(room, 'PLAYER_STATION_REWARDS_COCOFOLIA_APPLIED', { participantId, stationId: STATIONS[room.stationIndex].id, transactionCount: transactions.length }, 'gm');
+}
+
+function startFreeTimeIntroduction(room) {
+  if (room.phase !== PHASE.CURRENCY_SYNC_WAIT || room.stationIndex >= STATIONS.length - 1) throw new Error('自由時間を開始できる報酬反映待機ではありません');
+  const pending = pendingStationCurrencyTransactions(room);
+  if (pending.length) throw new Error(`ココフォリア未反映の駅報酬が${pending.length}件あります`);
+  room.phase = PHASE.FREE_TIME_INTRO;
+  room.freeTimeIntroductionStep = 1;
+  room.timer = null;
+  event(room, 'FREE_TIME_INTRODUCTION_STARTED', { stationId: STATIONS[room.stationIndex].id });
+}
+
+function advanceFreeTimeIntroduction(room) {
+  if (room.phase !== PHASE.FREE_TIME_INTRO) throw new Error('自由時間の案内中ではありません');
+  const narration = freeTimeNarration(room);
+  if (room.freeTimeIntroductionStep < narration.lines.length) {
+    room.freeTimeIntroductionStep += 1;
+    event(room, 'FREE_TIME_INTRODUCTION_ADVANCED', { stationId: STATIONS[room.stationIndex].id, step: room.freeTimeIntroductionStep }, 'gm');
+    return;
+  }
+  room.phase = PHASE.FREE_TIME;
+  room.freeTimeIntroductionStep = 0;
+  room.timer = { startedAt: Date.now(), endsAt: Date.now() + 300_000 };
+  room.players.forEach(player => { player.freeTimeReady = false; player.confirmed = false; });
+  event(room, 'FREE_TIME_STARTED', { stationId: STATIONS[room.stationIndex].id, seconds: 300 });
+}
 
 function purchaseShopItem(room, player, itemId, requestedPayment) {
   const shop = SHOP_BY_STATION_ID[STATIONS[room.stationIndex]?.id];
@@ -1211,6 +1373,8 @@ function startNextStation(room) {
   room.stationTurn = 0;
   room.phase = PHASE.STATION_INTRODUCTION;
   room.stationIntroductionStep = 1;
+  room.rewardNarrationStep = 0;
+  room.freeTimeIntroductionStep = 0;
   room.stationResult = null;
   room.revealedUsages = [];
   room.timer = null;
@@ -1275,16 +1439,28 @@ export function projectState(room, actor) {
     recipientName: room.players.find(player => player.participantId === item.recipientId)?.name
   }));
   const publicEvents = room.events.filter(item => item.visibility === 'public' || isGm || item.visibility === `private:${actor.participantId}`).slice(-100);
+  const stationCurrencyTransactions = room.currencyTransactions.filter(transaction => transaction.stationId === STATIONS[room.stationIndex]?.id).map(transaction => ({
+    ...transaction,
+    playerNumber: room.players.find(player => player.participantId === transaction.participantId)?.playerNumber,
+    playerName: room.players.find(player => player.participantId === transaction.participantId)?.name,
+    currencyLabel: CURRENCY_LABELS[transaction.currency]
+  }));
+  const rewardNarration = room.phase === PHASE.REWARD_NARRATION ? { ...stationRewardNarration(room), step: room.rewardNarrationStep } : null;
+  const freeTimeIntroduction = room.phase === PHASE.FREE_TIME_INTRO ? { ...freeTimeNarration(room), step: room.freeTimeIntroductionStep } : null;
   return {
     code: room.code, testMode: Boolean(room.testMode), phase: room.phase, station: room.stationIndex >= 0 ? STATIONS[room.stationIndex] : null,
     stationTurn: room.stationTurn, globalTurnIndex: room.globalTurnIndex, timer: room.timer, introductionStep: room.introductionStep || 0, activeStationEffectIds: activeStationEffectIds(room),
     gameGuide: room.phase === PHASE.GAME_GUIDE ? { title: GAME_GUIDE.title, lines: GAME_GUIDE.lines, step: room.gameGuideStep } : null,
     stationIntroduction: stationIntroduction ? { title: stationIntroduction.title, lines: stationIntroduction.lines, step: room.stationIntroductionStep } : null,
+    rewardNarration,
+    freeTimeIntroduction,
     me: actor.role === 'GM' ? { participantId: actor.participantId, role: 'GM', name: actor.name } : privatePlayer(actor, room),
     players: room.players.map(player => ({ participantId: player.participantId, playerNumber: player.playerNumber, name: player.name, hp: player.hp, isDeadState: player.isDeadState, packId: player.packId, confirmed: player.confirmed, selfIntroductionComplete: Boolean(player.selfIntroductionComplete), freeTimeReady: Boolean(player.freeTimeReady), ongoingEffects: player.ongoingEffects.map(({ sourceId, cardId, ...effect }) => effect), selection: isGm || player.participantId === actor.participantId ? player.selection : undefined })),
     packs: PACKS.map(pack => ({ ...pack, cards: isGm || actor.packId === pack.id ? CARDS.filter(card => card.packId === pack.id) : undefined })), stations: STATIONS,
     testPlayers: isGm ? room.players.map(player => ({ ...privatePlayer(player, room), selection: player.selection, confirmed: player.confirmed })) : undefined,
     stationResult: room.stationResult,
+    currencySync: room.phase === PHASE.CURRENCY_SYNC_WAIT ? { total: stationCurrencyTransactions.length, pending: stationCurrencyTransactions.filter(transaction => !transaction.cocofoliaApplied).length } : null,
+    stationCurrencyTransactions: isGm ? stationCurrencyTransactions : undefined,
     shop: shopForRoom(room),
     purchaseTransactions: isGm ? room.purchaseTransactions.map(transaction => ({ ...transaction, playerName: room.players.find(player => player.participantId === transaction.participantId)?.name, itemName: SHOP_ITEM_BY_ID[transaction.itemId]?.name })) : undefined,
     transferRequests: visibleTransfers,

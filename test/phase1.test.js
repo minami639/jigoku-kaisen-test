@@ -20,6 +20,16 @@ function setup() {
   return { room, players };
 }
 
+function completeRewardSyncAndStartFreeTime(room) {
+  applyAction(room, room.gm, { type: 'START_REWARD_NARRATION' });
+  while (room.phase === 'REWARD_NARRATION') applyAction(room, room.gm, { type: 'ADVANCE_REWARD_NARRATION' });
+  for (const transaction of room.currencyTransactions.filter(item => item.stationId === room.stationResult.stationId && !item.cocofoliaApplied)) {
+    applyAction(room, room.gm, { type: 'MARK_CURRENCY_TRANSACTION_APPLIED', transactionId: transaction.id });
+  }
+  applyAction(room, room.gm, { type: 'START_FREE_TIME' });
+  while (room.phase === 'FREE_TIME_INTRO') applyAction(room, room.gm, { type: 'ADVANCE_FREE_TIME_INTRODUCTION' });
+}
+
 test('definitions contain seven packs, 35 cards and 25 configured turns', () => {
   assert.equal(PACKS.length, 7);
   assert.equal(CARDS.length, 35);
@@ -391,7 +401,7 @@ test('needle station introduction is reachable after Ice Hell and needle concent
   applyAction(room, room.gm, { type: 'TEST_ACK_ALL_RESULTS' });
   applyAction(room, room.gm, { type: 'NEXT_TURN' });
   assert.equal(room.phase, 'STATION_RESULT');
-  applyAction(room, room.gm, { type: 'START_FREE_TIME' });
+  completeRewardSyncAndStartFreeTime(room);
   applyAction(room, room.gm, { type: 'START_NEXT_STATION' });
   assert.equal(room.phase, 'STATION_INTRODUCTION');
   assert.equal(room.stationIndex, 2);
@@ -509,15 +519,44 @@ test('currency transfer requires GM confirmation and tracks CCF reflection', () 
   assert.equal(room.transferRequests[0].cocofoliaApplied, true);
 });
 
-test('third scorch result advances through station result and GM-started free time', () => {
+test('third scorch result follows reward narration, Cocofolia sync, and GM-started free time', () => {
   const room = createTestRoom();
   applyAction(room, room.gm, { type: 'TEST_JUMP_PHASE', phase: 'TURN_RESULT', stationIndex: 0, stationTurn: 3 });
+  room.players[0].stationStats.damageDealt = 3;
+  room.players[0].stationStats.support = 1;
+  room.players[0].stationStats.stationScore = 3;
   applyAction(room, room.gm, { type: 'TEST_ACK_ALL_RESULTS' });
   applyAction(room, room.gm, { type: 'NEXT_TURN' });
   assert.equal(room.phase, 'STATION_RESULT');
   assert.equal(room.stationResult.rankings.length, 7);
-  assert.ok(room.players.every(player => player.currency.one >= 3));
+  const summary = room.stationResult.rewardSummary.find(entry => entry.participantId === room.players[0].participantId);
+  assert.equal(summary.rankReward, 3);
+  assert.equal(summary.supportAward, 1);
+  assert.equal(summary.specialBonus, 1);
+  assert.equal(summary.totalOne, 5);
+  assert.match(room.stationResult.specialBonus.condition, /実ダメージ合計3以上/);
+  assert.throws(() => applyAction(room, room.players[0], { type: 'BUY_SHOP_ITEM', itemId: 'will-o-wisp-amulet', paymentAmount: 5 }), /自由時間/);
+  assert.throws(() => applyAction(room, room.gm, { type: 'START_NEXT_STATION' }), /自由時間/);
+  applyAction(room, room.gm, { type: 'START_REWARD_NARRATION' });
+  assert.equal(room.phase, 'REWARD_NARRATION');
+  assert.match(projectState(room, room.players[0]).rewardNarration.lines.join('\n'), /支援賞/);
+  while (room.phase === 'REWARD_NARRATION') applyAction(room, room.gm, { type: 'ADVANCE_REWARD_NARRATION' });
+  assert.equal(room.phase, 'CURRENCY_SYNC_WAIT');
+  assert.equal(room.timer, null);
+  const playerView = projectState(room, room.players[0]);
+  assert.equal(playerView.stationResult.rewardSummary.find(entry => entry.participantId === room.players[0].participantId).totalOne, 5);
+  assert.throws(() => applyAction(room, room.gm, { type: 'START_FREE_TIME' }), /未反映/);
+  const transactions = room.currencyTransactions.filter(item => item.stationId === 'scorch');
+  assert.ok(transactions.length > 0);
+  applyAction(room, room.gm, { type: 'MARK_PLAYER_STATION_REWARDS_APPLIED', participantId: room.players[0].participantId });
+  assert.equal(room.phase, 'CURRENCY_SYNC_WAIT');
+  for (const transaction of room.currencyTransactions.filter(item => item.stationId === 'scorch' && !item.cocofoliaApplied)) {
+    applyAction(room, room.gm, { type: 'MARK_CURRENCY_TRANSACTION_APPLIED', transactionId: transaction.id });
+  }
   applyAction(room, room.gm, { type: 'START_FREE_TIME' });
+  assert.equal(room.phase, 'FREE_TIME_INTRO');
+  while (room.phase === 'FREE_TIME_INTRO') applyAction(room, room.gm, { type: 'ADVANCE_FREE_TIME_INTRODUCTION' });
   assert.equal(room.phase, 'FREE_TIME');
   assert.equal(room.timer.endsAt - room.timer.startedAt, 300_000);
+  applyAction(room, room.players[0], { type: 'BUY_SHOP_ITEM', itemId: 'will-o-wisp-amulet', paymentAmount: 5 });
 });

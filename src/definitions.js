@@ -9,12 +9,19 @@ export const PACKS = [
 ];
 
 export const STATIONS = [
-  { id: 'scorch', name: '第一・焦熱地獄', turnCount: 3, turnSeconds: 180, effect: '主分類「攻撃」の直接ダメージ＋1', effectId: 'scorch' },
-  { id: 'ice', name: '第二・氷結地獄', turnCount: 3, turnSeconds: 180, effect: 'すべての直接ダメージ−1', effectId: 'ice' },
-  { id: 'needle', name: '第三・針山地獄', turnCount: 3, turnSeconds: 180, effect: '集中攻撃成立時、対象へ駅ダメージ1', effectId: 'needle' },
-  { id: 'blood', name: '第四・血の池地獄', turnCount: 3, turnSeconds: 180, effect: '回復・吸収・反撃・反射＋1', effectId: 'blood' },
-  { id: 'hunger', name: '第五・餓鬼地獄', turnCount: 4, turnSeconds: 210, effect: '各PL1回、通常CT中カードを再使用可能', effectId: 'hunger' },
-  { id: 'war', name: '第六・修羅地獄', turnCount: 4, turnSeconds: 210, effect: '攻撃・防御・反撃・反射＋1', effectId: 'war' },
+  {
+    id: 'scorch', name: '第一・焦熱地獄', turnCount: 3, turnSeconds: 180, effect: '主分類「攻撃」の直接ダメージ＋1', effectId: 'scorch',
+    rewardFlow: {
+      supportAward: { minimum: 1, amount: 1 },
+      specialBonus: { id: 'scorch-damage-3', condition: 'この駅で他人へ実ダメージ合計3以上', amount: 1, evaluator: 'DAMAGE_DEALT_AT_LEAST', minimum: 3 },
+      freeTimeLines: ['「は〜い！ 冥貨もちゃんと配り終わりましたねぇ！」', '「それでは、次の地獄へ向かう前に――」', '「5分間の自由時間で〜す！」', '「お手洗いに行くもよし！ 誰かとお話しするもよし！ 冥貨を渡したり、お買い物したりするのもよし！」', '「好きに過ごしてくださいねぇ！」']
+    }
+  },
+  { id: 'ice', name: '第二・氷結地獄', turnCount: 3, turnSeconds: 180, effect: 'すべての直接ダメージ−1', effectId: 'ice', rewardFlow: { supportAward: { minimum: 1, amount: 1 } } },
+  { id: 'needle', name: '第三・針山地獄', turnCount: 3, turnSeconds: 180, effect: '集中攻撃成立時、対象へ駅ダメージ1', effectId: 'needle', rewardFlow: { supportAward: { minimum: 1, amount: 1 } } },
+  { id: 'blood', name: '第四・血の池地獄', turnCount: 3, turnSeconds: 180, effect: '回復・吸収・反撃・反射＋1', effectId: 'blood', rewardFlow: { supportAward: { minimum: 1, amount: 1 } } },
+  { id: 'hunger', name: '第五・餓鬼地獄', turnCount: 4, turnSeconds: 210, effect: '各PL1回、通常CT中カードを再使用可能', effectId: 'hunger', rewardFlow: { supportAward: { minimum: 1, amount: 1 } } },
+  { id: 'war', name: '第六・修羅地獄', turnCount: 4, turnSeconds: 210, effect: '攻撃・防御・反撃・反射＋1', effectId: 'war', rewardFlow: { supportAward: { minimum: 1, amount: 1 } } },
   { id: 'infinite', name: '第七・無間地獄', turnCount: 5, turnSeconds: 210, effect: '過去6駅から2効果を再演', effectId: 'infinite' }
 ];
 
