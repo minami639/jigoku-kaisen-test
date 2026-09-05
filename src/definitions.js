@@ -62,3 +62,10 @@ export const CARDS = cards.map(([id, packId, name, category, targetType, damage,
 
 export const CARD_BY_ID = Object.fromEntries(CARDS.map(card => [card.id, card]));
 export const PACK_BY_ID = Object.fromEntries(PACKS.map(pack => [pack.id, pack]));
+
+export const SHOP_ITEMS = [
+  { id: 'will-o-wisp-amulet', shop: 1, name: '鬼火のお守り', price: 3, payment: { one: 5 }, change: { type: 'two', amount: 1, label: '弐×1' }, effect: '自分が選んだ七獄カードの直接ダメージ＋1。単体直接ダメージ上限4を適用する。', stock: 1 },
+  { id: 'protective-rosary', shop: 1, name: '護りの数珠', price: 2, payment: { one: 5 }, change: { type: 'three', amount: 1, label: '参×1' }, effect: '自分がこの駅で受ける直接ダメージを合計1軽減する。', stock: 1 },
+  { id: 'red-bandage', shop: 1, name: '赤い包帯', price: 3, payment: { one: 5 }, change: { type: 'two', amount: 1, label: '弐×1' }, effect: 'カード処理終了後、自分HP＋1。最大HP15を超えて回復しない。', stock: 1 }
+];
+export const SHOP_ITEM_BY_ID = Object.fromEntries(SHOP_ITEMS.map(item => [item.id, item]));

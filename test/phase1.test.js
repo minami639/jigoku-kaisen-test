@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { applyAction, createRoom, createTestRoom, joinRoom, projectState } from '../src/game.js';
-import { PACKS, CARDS, STATIONS } from '../src/definitions.js';
+import { PACKS, CARDS, STATIONS, SHOP_ITEMS } from '../src/definitions.js';
 
 function completeSelfIntroductions(room) {
   room.players.forEach(player => applyAction(room, player, { type: 'COMPLETE_SELF_INTRODUCTION' }));
@@ -213,4 +213,93 @@ test('test GM can operate one PL card flow without changing normal permissions',
   applyAction(room, room.gm, { type: 'TEST_PLAYER_ACTION', participantId: player.participantId, playerAction: { type: 'CONFIRM_CARD' } });
   assert.equal(player.confirmed, true);
   assert.throws(() => applyAction(room, room.gm, { type: 'TEST_PLAYER_ACTION', participantId: player.participantId, playerAction: { type: 'ADJUST_HP' } }), /許可されていない/);
+});
+
+function firstShopRoom() {
+  const room = createTestRoom();
+  applyAction(room, room.gm, { type: 'TEST_JUMP_PHASE', phase: 'FREE_TIME', stationIndex: 0, stationTurn: 0 });
+  return room;
+}
+
+test('first shop exposes three stock-one products only during first free time', () => {
+  const room = firstShopRoom();
+  const view = projectState(room, room.players[0]);
+  assert.equal(SHOP_ITEMS.length, 3);
+  assert.deepEqual(view.shop.items.map(item => [item.name, item.stock, item.soldOut]), [
+    ['鬼火のお守り', 1, false], ['護りの数珠', 1, false], ['赤い包帯', 1, false]
+  ]);
+  applyAction(room, room.gm, { type: 'START_NEXT_STATION' });
+  assert.throws(() => applyAction(room, room.players[0], { type: 'BUY_SHOP_ITEM', itemId: 'will-o-wisp-amulet' }), /自由時間/);
+});
+
+test('first-shop purchases atomically exchange five one coins for item and prime change', () => {
+  const cases = [
+    ['will-o-wisp-amulet', 'two'],
+    ['protective-rosary', 'three'],
+    ['red-bandage', 'two']
+  ];
+  for (const [itemId, changeType] of cases) {
+    const room = firstShopRoom();
+    const player = room.players[0];
+    applyAction(room, player, { type: 'BUY_SHOP_ITEM', itemId });
+    assert.equal(player.currency.one, 0);
+    assert.equal(player.currency[changeType], 1);
+    assert.equal(player.shopInventory[0].itemId, itemId);
+    assert.equal(player.shopInventory[0].transactionId, room.purchaseTransactions[0].id);
+    assert.equal(room.shopStock[itemId], 0);
+    assert.equal(room.purchaseTransactions[0].cocofoliaApplied, false);
+  }
+});
+
+test('first shop rejects insufficient funds and resolves stock races without revealing buyer', () => {
+  const room = firstShopRoom();
+  room.players[0].currency.one = 4;
+  assert.throws(() => applyAction(room, room.players[0], { type: 'BUY_SHOP_ITEM', itemId: 'will-o-wisp-amulet' }), /あと1枚/);
+  applyAction(room, room.players[1], { type: 'BUY_SHOP_ITEM', itemId: 'will-o-wisp-amulet' });
+  assert.throws(() => applyAction(room, room.players[2], { type: 'BUY_SHOP_ITEM', itemId: 'will-o-wisp-amulet' }), /他のプレイヤーが先に購入/);
+  const otherView = projectState(room, room.players[2]);
+  assert.equal(otherView.shop.items.find(item => item.id === 'will-o-wisp-amulet').soldOut, true);
+  assert.equal(otherView.purchaseTransactions, undefined);
+  assert.equal(otherView.players.find(player => player.playerNumber === 2).shopInventory, undefined);
+  const ownerView = projectState(room, room.players[1]);
+  assert.equal(ownerView.me.shopInventory[0].itemId, 'will-o-wisp-amulet');
+  assert.equal(ownerView.me.purchaseTransactions.length, 1);
+});
+
+test('GM can see and acknowledge CCF purchase work while first-purchase scene occurs once', () => {
+  const room = firstShopRoom();
+  applyAction(room, room.players[0], { type: 'BUY_SHOP_ITEM', itemId: 'will-o-wisp-amulet' });
+  applyAction(room, room.players[1], { type: 'BUY_SHOP_ITEM', itemId: 'protective-rosary' });
+  assert.equal(room.players[0].purchaseNotice.firstPurchase, true);
+  assert.equal(room.players[1].purchaseNotice.firstPurchase, false);
+  const gmView = projectState(room, room.gm);
+  assert.equal(gmView.purchaseTransactions[0].playerName, 'テストPL1');
+  assert.equal(gmView.purchaseTransactions[0].itemName, '鬼火のお守り');
+  applyAction(room, room.gm, { type: 'MARK_PURCHASE_APPLIED', transactionId: room.purchaseTransactions[0].id });
+  assert.equal(room.purchaseTransactions[0].cocofoliaApplied, true);
+  assert.equal(room.purchaseTransactions[1].cocofoliaApplied, false);
+});
+
+test('free-time readiness never auto-advances and unused shop cards persist into ice', () => {
+  const room = firstShopRoom();
+  applyAction(room, room.players[0], { type: 'BUY_SHOP_ITEM', itemId: 'red-bandage' });
+  room.players.forEach(player => applyAction(room, player, { type: 'SET_FREE_TIME_READY', ready: true }));
+  assert.equal(room.phase, 'FREE_TIME');
+  applyAction(room, room.gm, { type: 'START_NEXT_STATION' });
+  assert.equal(room.phase, 'TURN_SELECTION');
+  assert.equal(room.stationIndex, 1);
+  assert.equal(room.players[0].shopInventory[0].used, false);
+});
+
+test('third scorch result advances through station result and GM-started free time', () => {
+  const room = createTestRoom();
+  applyAction(room, room.gm, { type: 'TEST_JUMP_PHASE', phase: 'TURN_RESULT', stationIndex: 0, stationTurn: 3 });
+  applyAction(room, room.gm, { type: 'TEST_ACK_ALL_RESULTS' });
+  applyAction(room, room.gm, { type: 'NEXT_TURN' });
+  assert.equal(room.phase, 'STATION_RESULT');
+  assert.equal(room.stationResult.rankings.length, 7);
+  assert.ok(room.players.every(player => player.currency.one >= 5));
+  applyAction(room, room.gm, { type: 'START_FREE_TIME' });
+  assert.equal(room.phase, 'FREE_TIME');
+  assert.equal(room.timer.endsAt - room.timer.startedAt, 300_000);
 });

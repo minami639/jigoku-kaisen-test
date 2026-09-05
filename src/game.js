@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
-import { CARDS, CARD_BY_ID, PACKS, PACK_BY_ID, STATIONS } from './definitions.js';
+import { CARDS, CARD_BY_ID, PACKS, PACK_BY_ID, SHOP_ITEMS, SHOP_ITEM_BY_ID, STATIONS } from './definitions.js';
 
-export const PHASE = Object.freeze({ LOBBY: 'LOBBY', INTRODUCTION: 'INTRODUCTION', SELF_INTRODUCTION: 'SELF_INTRODUCTION', PACK_SELECTION: 'PACK_SELECTION', TURN_SELECTION: 'TURN_SELECTION', TURN_RESULT: 'TURN_RESULT', FREE_TIME: 'FREE_TIME' });
+export const PHASE = Object.freeze({ LOBBY: 'LOBBY', INTRODUCTION: 'INTRODUCTION', SELF_INTRODUCTION: 'SELF_INTRODUCTION', PACK_SELECTION: 'PACK_SELECTION', TURN_SELECTION: 'TURN_SELECTION', TURN_RESULT: 'TURN_RESULT', STATION_RESULT: 'STATION_RESULT', FREE_TIME: 'FREE_TIME' });
 const token = () => crypto.randomBytes(24).toString('base64url');
 const id = () => crypto.randomUUID();
 const now = () => new Date().toISOString();
@@ -16,7 +16,7 @@ export function createRoom(gmName = 'GM') {
   const gm = { participantId: id(), authToken: token(), role: 'GM', name: gmName.trim() || 'GM' };
   const room = {
     id: id(), code, phase: PHASE.LOBBY, gm, players: [], stationIndex: -1, stationTurn: 0,
-    globalTurnIndex: 0, timer: null, revealedUsages: [], events: [], createdAt: now(), updatedAt: now()
+    globalTurnIndex: 0, timer: null, revealedUsages: [], stationResult: null, shopStock: Object.fromEntries(SHOP_ITEMS.map(item => [item.id, item.stock])), purchaseTransactions: [], firstPurchaseCompleted: false, events: [], createdAt: now(), updatedAt: now()
   };
   event(room, 'ROOM_CREATED', { gmName: gm.name });
   return room;
@@ -37,7 +37,7 @@ export function joinRoom(room, name) {
   const playerNumber = room.players.length + 1;
   const player = {
     participantId: id(), authToken: token(), role: 'PL', playerNumber, name: name.trim(), hp: 15,
-    isDeadState: false, packId: null, selection: null, confirmed: false, selfIntroductionComplete: false, cardUsage: [], cardMarks: {},
+    isDeadState: false, packId: null, selection: null, confirmed: false, selfIntroductionComplete: false, freeTimeReady: false, cardUsage: [], cardMarks: {}, shopInventory: [], purchaseNotice: null,
     ongoingEffects: [], currency: { one: 5, two: 0, three: 0, five: 0, seven: 0 },
     stationStats: freshStats(), totalStats: freshStats()
   };
@@ -59,7 +59,20 @@ export function authenticate(room, authToken) {
 function requireGm(actor) { if (actor.role !== 'GM') throw new Error('GM専用操作です'); }
 function requirePlayer(actor) { if (actor.role !== 'PL') throw new Error('PL専用操作です'); }
 
+function ensureRoomState(room) {
+  room.shopStock ||= Object.fromEntries(SHOP_ITEMS.map(item => [item.id, item.stock]));
+  room.purchaseTransactions ||= [];
+  room.currencyTransactions ||= [];
+  room.firstPurchaseCompleted ||= false;
+  for (const player of room.players) {
+    player.shopInventory ||= [];
+    player.purchaseNotice ||= null;
+    player.freeTimeReady ||= false;
+  }
+}
+
 export function applyAction(room, actor, action) {
+  ensureRoomState(room);
   switch (action.type) {
     case 'OPEN_INTRODUCTION':
       requireGm(actor);
@@ -151,6 +164,42 @@ export function applyAction(room, actor, action) {
       if (room.players.some(player => !player.confirmed)) throw new Error('全PLの結果確認完了が必要です');
       nextTurn(room);
       break;
+    case 'START_FREE_TIME':
+      requireGm(actor);
+      if (room.phase !== PHASE.STATION_RESULT || room.stationIndex !== 0) throw new Error('第一地獄の駅結果確認中ではありません');
+      room.phase = PHASE.FREE_TIME;
+      room.timer = { startedAt: Date.now(), endsAt: Date.now() + 300_000 };
+      room.players.forEach(player => { player.freeTimeReady = false; player.confirmed = false; });
+      event(room, 'FREE_TIME_STARTED', { stationId: STATIONS[room.stationIndex].id, seconds: 300 });
+      break;
+    case 'BUY_SHOP_ITEM':
+      requirePlayer(actor);
+      purchaseShopItem(room, actor, action.itemId);
+      break;
+    case 'DISMISS_PURCHASE_NOTICE':
+      requirePlayer(actor);
+      actor.purchaseNotice = null;
+      break;
+    case 'SET_FREE_TIME_READY':
+      requirePlayer(actor);
+      if (room.phase !== PHASE.FREE_TIME) throw new Error('自由時間中ではありません');
+      actor.freeTimeReady = Boolean(action.ready);
+      event(room, 'FREE_TIME_READY_CHANGED', { participantId: actor.participantId, ready: actor.freeTimeReady });
+      break;
+    case 'START_NEXT_STATION':
+      requireGm(actor);
+      if (room.phase !== PHASE.FREE_TIME || room.stationIndex !== 0) throw new Error('第一地獄の自由時間中ではありません');
+      startNextStation(room);
+      break;
+    case 'MARK_PURCHASE_APPLIED': {
+      requireGm(actor);
+      const transaction = room.purchaseTransactions.find(item => item.id === action.transactionId);
+      if (!transaction) throw new Error('購入取引が見つかりません');
+      transaction.cocofoliaApplied = true;
+      transaction.appliedAt = now();
+      event(room, 'PURCHASE_COCOFOLIA_APPLIED', { transactionId: transaction.id }, 'gm');
+      break;
+    }
     case 'SET_TIMER':
       requireGm(actor);
       room.timer = { startedAt: Date.now(), endsAt: Date.now() + Math.max(0, Number(action.seconds)) * 1000 };
@@ -189,6 +238,12 @@ export function applyAction(room, actor, action) {
       room.players.forEach(player => { player.confirmed = true; });
       event(room, 'TEST_ALL_RESULTS_ACKNOWLEDGED', { players: room.players.length }, 'gm');
       break;
+    case 'TEST_GRANT_ONE_CURRENCY':
+      requireGm(actor);
+      if (!room.testMode) throw new Error('テストルーム専用操作です');
+      room.players.forEach(player => { player.currency.one = Math.max(player.currency.one, 20); });
+      event(room, 'TEST_ONE_CURRENCY_GRANTED', { amount: 20 }, 'gm');
+      break;
     case 'TEST_SELECT_PACK': {
       requireGm(actor);
       if (!room.testMode) throw new Error('テストルーム専用操作です');
@@ -223,7 +278,7 @@ export function applyAction(room, actor, action) {
     case 'TEST_PLAYER_ACTION': {
       requireGm(actor);
       if (!room.testMode) throw new Error('テストルーム専用操作です');
-      if (!['SELECT_CARD', 'CONFIRM_CARD', 'ACK_RESULT'].includes(action.playerAction?.type)) throw new Error('許可されていないテスト操作です');
+      if (!['SELECT_CARD', 'CONFIRM_CARD', 'ACK_RESULT', 'BUY_SHOP_ITEM', 'DISMISS_PURCHASE_NOTICE', 'SET_FREE_TIME_READY'].includes(action.playerAction?.type)) throw new Error('許可されていないテスト操作です');
       const player = room.players.find(item => item.participantId === action.participantId);
       if (!player) throw new Error('対象PLが見つかりません');
       applyAction(room, player, action.playerAction);
@@ -392,10 +447,67 @@ function recordDamage(source, target, amount) { source.stationStats.damageDealt 
 function damageSelf(room, player, amount, cardId) { const before = player.hp; player.hp = Math.max(0, player.hp - amount); if (before > 0 && player.hp === 0) player.stationStats.reachedZero = true; event(room, 'SELF_DAMAGE', { participantId: player.participantId, cardId, amount: before - player.hp }); }
 function applyHeal(room, source, targetId, amount, cardId, support = true) { const target = room.players.find(p => p.participantId === targetId); const before = target.hp; target.hp = Math.min(15, target.hp + amount); const actual = target.hp - before; if (support && source !== target) { source.stationStats.support += actual; source.totalStats.support += actual; } event(room, 'HEAL', { sourceId: source.participantId, targetId, cardId, amount: actual }); }
 
+function finishStation(room) {
+  const eligible = room.players.filter(player => !player.stationStats.reachedZero);
+  const sorted = [...eligible].sort((a, b) => b.stationStats.stationScore - a.stationStats.stationScore || b.hp - a.hp || b.stationStats.damageDealt - a.stationStats.damageDealt || b.stationStats.support - a.stationStats.support || a.stationStats.damageTaken - b.stationStats.damageTaken);
+  const rewardByRank = { 1: 3, 2: 2, 3: 2, 4: 1, 5: 1 };
+  let previous = null;
+  const rankings = sorted.map((player, index) => {
+    const signature = [player.stationStats.stationScore, player.hp, player.stationStats.damageDealt, player.stationStats.support, player.stationStats.damageTaken].join(':');
+    const rank = previous?.signature === signature ? previous.rank : index + 1;
+    const reward = rewardByRank[rank] || 0;
+    if (reward) {
+      player.currency.one += reward;
+      room.currencyTransactions.push({ id: id(), type: 'STATION_REWARD', participantId: player.participantId, stationId: STATIONS[room.stationIndex].id, currency: 'one', amount: reward, cocofoliaApplied: false, createdAt: now() });
+    }
+    previous = { signature, rank };
+    return { participantId: player.participantId, playerNumber: player.playerNumber, rank, reward, stationScore: player.stationStats.stationScore, hp: player.hp };
+  });
+  room.stationResult = { stationId: STATIONS[room.stationIndex].id, rankings, excludedPlayerNumbers: room.players.filter(player => player.stationStats.reachedZero).map(player => player.playerNumber) };
+  room.phase = PHASE.STATION_RESULT;
+  room.timer = null;
+  event(room, 'STATION_RESULT_CONFIRMED', { stationId: room.stationResult.stationId, rankings });
+}
+
+function purchaseShopItem(room, player, itemId) {
+  if (room.phase !== PHASE.FREE_TIME || room.stationIndex !== 0) throw new Error('第一ショップは第一地獄終了後の自由時間だけ利用できます');
+  if (!room.timer || Date.now() >= room.timer.endsAt) throw new Error('ショップ購入受付は終了しました');
+  const item = SHOP_ITEM_BY_ID[itemId];
+  if (!item || item.shop !== 1) throw new Error('第一ショップの商品ではありません');
+  if ((room.shopStock[item.id] || 0) < 1) throw new Error('他のプレイヤーが先に購入しました');
+  if (player.currency.one < item.payment.one) throw new Error(`壱の冥貨があと${item.payment.one - player.currency.one}枚必要です`);
+  const transactionId = id();
+  const isFirstPurchase = !room.firstPurchaseCompleted;
+  player.currency.one -= item.payment.one;
+  player.currency[item.change.type] += item.change.amount;
+  player.shopInventory.push({ itemId: item.id, transactionId, used: false, acquiredAt: now() });
+  room.shopStock[item.id] -= 1;
+  const transaction = { id: transactionId, participantId: player.participantId, playerNumber: player.playerNumber, itemId: item.id, payment: { ...item.payment }, change: { ...item.change }, cocofoliaApplied: false, createdAt: now() };
+  room.purchaseTransactions.push(transaction);
+  room.firstPurchaseCompleted = true;
+  player.purchaseNotice = { transactionId, itemId: item.id, firstPurchase: isFirstPurchase };
+  event(room, 'SHOP_PURCHASE_COMPLETED', { transactionId, itemId: item.id }, `private:${player.participantId}`);
+}
+
+function startNextStation(room) {
+  room.stationIndex = 1;
+  room.stationTurn = 1;
+  room.globalTurnIndex += 1;
+  room.phase = PHASE.TURN_SELECTION;
+  room.stationResult = null;
+  room.revealedUsages = [];
+  room.timer = { startedAt: Date.now(), endsAt: Date.now() + STATIONS[1].turnSeconds * 1000 };
+  room.players.forEach(player => { player.selection = null; player.confirmed = false; player.freeTimeReady = false; player.stationStats = freshStats(); });
+  event(room, 'STATION_STARTED', { stationId: STATIONS[1].id, stationTurn: 1, globalTurnIndex: room.globalTurnIndex });
+}
+
 function nextTurn(room) {
   if (room.phase !== PHASE.TURN_RESULT) throw new Error('ターン結果確認中ではありません');
   const station = STATIONS[room.stationIndex];
-  if (room.stationTurn >= station.turnCount) throw new Error('Phase 1では第一ターン以降の駅終了処理は未実装です');
+  if (room.stationTurn >= station.turnCount) {
+    if (room.stationIndex === 0) return finishStation(room);
+    throw new Error('現在は第一地獄終了後まで実装済みです');
+  }
   room.stationTurn += 1; room.globalTurnIndex += 1; room.phase = PHASE.TURN_SELECTION; room.revealedUsages = [];
   room.timer = { startedAt: Date.now(), endsAt: Date.now() + station.turnSeconds * 1000 };
   for (const player of room.players) { player.selection = null; player.confirmed = false; }
@@ -403,20 +515,25 @@ function nextTurn(room) {
 }
 
 export function projectState(room, actor) {
+  ensureRoomState(room);
   const isGm = actor.role === 'GM';
   const publicEvents = room.events.filter(item => item.visibility === 'public' || isGm || item.visibility === `private:${actor.participantId}`).slice(-100);
   return {
     code: room.code, testMode: Boolean(room.testMode), phase: room.phase, station: room.stationIndex >= 0 ? STATIONS[room.stationIndex] : null,
     stationTurn: room.stationTurn, globalTurnIndex: room.globalTurnIndex, timer: room.timer, introductionStep: room.introductionStep || 0,
     me: actor.role === 'GM' ? { participantId: actor.participantId, role: 'GM', name: actor.name } : privatePlayer(actor, room),
-    players: room.players.map(player => ({ participantId: player.participantId, playerNumber: player.playerNumber, name: player.name, hp: player.hp, isDeadState: player.isDeadState, packId: player.packId, confirmed: player.confirmed, selfIntroductionComplete: Boolean(player.selfIntroductionComplete), selection: isGm || player.participantId === actor.participantId ? player.selection : undefined })),
+    players: room.players.map(player => ({ participantId: player.participantId, playerNumber: player.playerNumber, name: player.name, hp: player.hp, isDeadState: player.isDeadState, packId: player.packId, confirmed: player.confirmed, selfIntroductionComplete: Boolean(player.selfIntroductionComplete), freeTimeReady: Boolean(player.freeTimeReady), selection: isGm || player.participantId === actor.participantId ? player.selection : undefined })),
     packs: PACKS.map(pack => ({ ...pack, cards: isGm || actor.packId === pack.id ? CARDS.filter(card => card.packId === pack.id) : undefined })), stations: STATIONS,
     testPlayers: isGm ? room.players.map(player => ({ ...privatePlayer(player, room), selection: player.selection, confirmed: player.confirmed })) : undefined,
+    stationResult: room.stationResult,
+    shop: { items: SHOP_ITEMS.filter(item => item.shop === 1).map(item => ({ ...item, soldOut: (room.shopStock[item.id] || 0) < 1 })) },
+    purchaseTransactions: isGm ? room.purchaseTransactions.map(transaction => ({ ...transaction, playerName: room.players.find(player => player.participantId === transaction.participantId)?.name, itemName: SHOP_ITEM_BY_ID[transaction.itemId]?.name })) : undefined,
+    pendingCurrencyTransactions: isGm ? room.currencyTransactions.filter(transaction => !transaction.cocofoliaApplied) : undefined,
     revealedUsages: room.phase === PHASE.TURN_RESULT ? room.revealedUsages.map(use => { const card = CARDS.find(item => item.id === use.cardId); return { ...use, cardName: card?.name, category: card?.category, description: card?.description }; }) : [], events: publicEvents
   };
 }
 
 function privatePlayer(player, room) {
   const cards = CARDS.filter(card => card.packId === player.packId).map(card => ({ ...card, unavailableReason: cooldownReason(player, card.id, room.globalTurnIndex) }));
-  return { participantId: player.participantId, role: 'PL', playerNumber: player.playerNumber, name: player.name, hp: player.hp, packId: player.packId, cards, cardMarks: player.cardMarks, currency: player.currency };
+  return { participantId: player.participantId, role: 'PL', playerNumber: player.playerNumber, name: player.name, hp: player.hp, packId: player.packId, cards, cardMarks: player.cardMarks, currency: player.currency, shopInventory: player.shopInventory.map(entry => ({ ...entry, item: SHOP_ITEM_BY_ID[entry.itemId] })), purchaseTransactions: room.purchaseTransactions.filter(transaction => transaction.participantId === player.participantId).map(transaction => ({ ...transaction, itemName: SHOP_ITEM_BY_ID[transaction.itemId]?.name })), purchaseNotice: player.purchaseNotice };
 }
