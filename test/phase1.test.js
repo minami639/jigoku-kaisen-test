@@ -359,8 +359,7 @@ test('shop payment change uses deterministic high-denomination decomposition', (
     [{ three: 1 }, { one: 0, two: 0, three: 0, five: 0, seven: 0 }],
     [{ seven: 1 }, { one: 1, two: 0, three: 1, five: 0, seven: 0 }],
     [{ two: 1, seven: 1 }, { one: 1, two: 0, three: 0, five: 1, seven: 0 }],
-    [{ three: 1, seven: 1 }, { one: 0, two: 0, three: 0, five: 0, seven: 1 }],
-    [{ three: 1, five: 1, seven: 1 }, { one: 0, two: 0, three: 0, five: 1, seven: 1 }]
+    [{ three: 1, seven: 1 }, { one: 0, two: 0, three: 0, five: 0, seven: 1 }]
   ];
   for (const [coins, expectedChange] of cases) {
     const room = firstShopRoom();
@@ -369,6 +368,12 @@ test('shop payment change uses deterministic high-denomination decomposition', (
     applyAction(room, player, { type: 'BUY_SHOP_ITEM', itemId: 'will-o-wisp-amulet', payment: payment(coins) });
     assert.deepEqual(room.purchaseTransactions[0].change.coins, expectedChange);
   }
+});
+
+test('shop payment rejects an overpayment greater than 7', () => {
+  const room = firstShopRoom();
+  room.players[0].currency = payment({ three: 1, five: 1, seven: 1 });
+  assert.throws(() => applyAction(room, room.players[0], { type: 'BUY_SHOP_ITEM', itemId: 'will-o-wisp-amulet', payment: payment({ three: 1, five: 1, seven: 1 }) }), /商品価格より7まで/);
 });
 
 test('paid prime coins are consumed and returned change can be used for a later purchase', () => {
@@ -613,4 +618,39 @@ test('third scorch result follows reward narration, Cocofolia sync, and GM-start
   assert.equal(room.phase, 'FREE_TIME');
   assert.equal(room.timer.endsAt - room.timer.startedAt, 300_000);
   applyAction(room, room.players[0], { type: 'BUY_SHOP_ITEM', itemId: 'will-o-wisp-amulet', payment: payment({ one: 5 }) });
+});
+
+test('Infinite Hell announces support and special outcomes without creating currency, then enters final flow', () => {
+  const room = createTestRoom();
+  applyAction(room, room.gm, { type: 'TEST_JUMP_PHASE', phase: 'TURN_RESULT', stationIndex: 6, stationTurn: 5 });
+  const player = room.players[0];
+  player.stationStats.support = 2;
+  player.cardUsage = [
+    { id: 'history-1', cardId: 'flame-strike', stationId: 'scorch', stationIndex: 0, stationTurn: 1, globalTurnIndex: 1, result: 'RESOLVED' },
+    { id: 'history-2', cardId: 'flame-strike', stationId: 'war', stationIndex: 5, stationTurn: 1, globalTurnIndex: 17, result: 'RESOLVED' },
+    { id: 'history-3', cardId: 'flame-strike', stationId: 'infinite', stationIndex: 6, stationTurn: 5, globalTurnIndex: 25, result: 'RESOLVED' }
+  ];
+  applyAction(room, room.gm, { type: 'TEST_ACK_ALL_RESULTS' });
+  applyAction(room, room.gm, { type: 'NEXT_TURN' });
+  assert.equal(room.phase, 'STATION_RESULT');
+  assert.equal(room.stationResult.noCurrencyRewards, true);
+  assert.deepEqual(room.stationResult.rankings, []);
+  assert.equal(room.stationResult.specialBonus.amount, 0);
+  assert.deepEqual(room.stationResult.specialBonus.winnerIds, [player.participantId]);
+  assert.equal(room.currencyTransactions.filter(transaction => transaction.stationId === 'infinite').length, 0);
+  applyAction(room, room.gm, { type: 'START_REWARD_NARRATION' });
+  const narration = projectState(room, player).rewardNarration.lines.join('\n');
+  assert.match(narration, /支援結果/);
+  assert.match(narration, /新しい冥貨は配布されません/);
+  while (room.phase === 'REWARD_NARRATION') applyAction(room, room.gm, { type: 'ADVANCE_REWARD_NARRATION' });
+  assert.equal(room.phase, 'FINAL_RANKING');
+  assert.equal(room.finalRanking.length, 7);
+  applyAction(room, room.gm, { type: 'START_FINAL_ALIGNMENT' });
+  assert.equal(room.phase, 'FINAL_ALIGNMENT');
+  assert.equal(room.timer.endsAt - room.timer.startedAt, 180_000);
+  applyAction(room, room.gm, { type: 'START_FINAL_JUDGMENT' });
+  assert.equal(room.phase, 'FINAL_JUDGMENT');
+  applyAction(room, room.gm, { type: 'CONFIRM_FINAL_ENDING', endingId: 'HELL_LOOP' });
+  assert.equal(room.phase, 'ENDING');
+  assert.equal(room.finalEnding.title, '地獄廻線');
 });
