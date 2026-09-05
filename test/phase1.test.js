@@ -87,6 +87,26 @@ test('pack choices and confirmation status are visible to every player during pa
   assert.equal(otherView.players[0].confirmed, true);
 });
 
+test('a player can clear an unconfirmed pack selection but cannot alter a confirmed selection', () => {
+  const room = createRoom();
+  const gm = room.gm;
+  const player = joinRoom(room, 'PL1');
+  Array.from({ length: 6 }, (_, index) => joinRoom(room, `PL${index + 2}`));
+  applyAction(room, gm, { type: 'OPEN_INTRODUCTION' });
+  applyAction(room, gm, { type: 'START_SELF_INTRODUCTION' });
+  completeSelfIntroductions(room);
+  applyAction(room, gm, { type: 'OPEN_PACK_SELECTION' });
+
+  applyAction(room, player, { type: 'SELECT_PACK', packId: 'scorch', confirmed: false });
+  applyAction(room, player, { type: 'CLEAR_PACK_SELECTION' });
+  assert.equal(player.packId, null);
+  assert.equal(player.confirmed, false);
+
+  applyAction(room, player, { type: 'SELECT_PACK', packId: 'scorch', confirmed: true });
+  assert.throws(() => applyAction(room, player, { type: 'CLEAR_PACK_SELECTION' }), /最終確認済み/);
+  assert.throws(() => applyAction(room, player, { type: 'SELECT_PACK', packId: 'ice', confirmed: false }), /最終確認済み/);
+});
+
 test('secret selections are projected only to owner and GM before reveal', () => {
   const { room, players } = setup();
   applyAction(room, players[0], { type: 'SELECT_CARD', cardId: 'flame-strike', targetId: players[1].participantId });

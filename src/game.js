@@ -158,12 +158,20 @@ export function applyAction(room, actor, action) {
     case 'SELECT_PACK': {
       requirePlayer(actor);
       if (room.phase !== PHASE.PACK_SELECTION) throw new Error('パック選択フェーズではありません');
+      if (actor.confirmed) throw new Error('最終確認済みのパックはGMが解除するまで変更できません');
       if (!PACK_BY_ID[action.packId]) throw new Error('存在しないパックです');
       actor.packId = action.packId;
       actor.confirmed = Boolean(action.confirmed);
       event(room, 'PACK_SELECTED', { participantId: actor.participantId, confirmed: actor.confirmed }, `private:${actor.participantId}`);
       break;
     }
+    case 'CLEAR_PACK_SELECTION':
+      requirePlayer(actor);
+      if (room.phase !== PHASE.PACK_SELECTION) throw new Error('パック選択フェーズではありません');
+      if (actor.confirmed) throw new Error('最終確認済みのパックはGMが解除するまで変更できません');
+      actor.packId = null;
+      event(room, 'PACK_SELECTION_CLEARED', { participantId: actor.participantId }, `private:${actor.participantId}`);
+      break;
     case 'START_FIRST_STATION':
       requireGm(actor);
       startFirstStation(room);
@@ -345,7 +353,7 @@ export function applyAction(room, actor, action) {
     case 'TEST_PLAYER_ACTION': {
       requireGm(actor);
       if (!room.testMode) throw new Error('テストルーム専用操作です');
-      if (!['SELECT_CARD', 'CONFIRM_CARD', 'ACK_RESULT', 'BUY_SHOP_ITEM', 'CREATE_TRANSFER_REQUEST', 'DISMISS_PURCHASE_NOTICE', 'SET_FREE_TIME_READY'].includes(action.playerAction?.type)) throw new Error('許可されていないテスト操作です');
+      if (!['SELECT_PACK', 'CLEAR_PACK_SELECTION', 'SELECT_CARD', 'CONFIRM_CARD', 'ACK_RESULT', 'BUY_SHOP_ITEM', 'CREATE_TRANSFER_REQUEST', 'DISMISS_PURCHASE_NOTICE', 'SET_FREE_TIME_READY'].includes(action.playerAction?.type)) throw new Error('許可されていないテスト操作です');
       const player = room.players.find(item => item.participantId === action.participantId);
       if (!player) throw new Error('対象PLが見つかりません');
       applyAction(room, player, action.playerAction);
