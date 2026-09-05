@@ -312,6 +312,29 @@ test('ice station uses a GM-controlled persistent introduction before its first 
   assert.equal(room.globalTurnIndex, 4);
 });
 
+test('needle station introduction is reachable after Ice Hell and needle concentration deals station damage once', () => {
+  const room = createTestRoom();
+  applyAction(room, room.gm, { type: 'TEST_JUMP_PHASE', phase: 'TURN_RESULT', stationIndex: 1, stationTurn: 3 });
+  applyAction(room, room.gm, { type: 'TEST_ACK_ALL_RESULTS' });
+  applyAction(room, room.gm, { type: 'NEXT_TURN' });
+  assert.equal(room.phase, 'STATION_RESULT');
+  applyAction(room, room.gm, { type: 'START_FREE_TIME' });
+  applyAction(room, room.gm, { type: 'START_NEXT_STATION' });
+  assert.equal(room.phase, 'STATION_INTRODUCTION');
+  assert.equal(room.stationIndex, 2);
+  assert.match(projectState(room, room.players[0]).stationIntroduction.lines.join('\n'), /針の集中/);
+
+  applyAction(room, room.gm, { type: 'TEST_JUMP_PHASE', phase: 'TURN_SELECTION', stationIndex: 2, stationTurn: 1 });
+  const cardIds = ['flame-strike', 'ice-spear', 'follow-needle', 'vampire', 'gluttony', 'heavy-slash', 'severance'];
+  room.players.forEach((player, index) => {
+    const target = room.players[index === 1 ? 0 : index === 0 || index === 2 ? 1 : 0];
+    applyAction(room, player, { type: 'SELECT_CARD', cardId: cardIds[index], targetId: target.participantId });
+    applyAction(room, player, { type: 'CONFIRM_CARD' });
+  });
+  applyAction(room, room.gm, { type: 'REVEAL_AND_RESOLVE' });
+  assert.ok(room.events.some(item => item.type === 'STATION_DAMAGE' && item.payload.targetId === room.players[1].participantId && item.payload.reason === 'NEEDLE_CONCENTRATION'));
+});
+
 test('first-shop buyer chooses the one-coin payment amount and receives only the resulting change', () => {
   const exactRoom = firstShopRoom();
   applyAction(exactRoom, exactRoom.players[0], { type: 'BUY_SHOP_ITEM', itemId: 'will-o-wisp-amulet', paymentAmount: 3 });

@@ -169,7 +169,7 @@ export function applyAction(room, actor, action) {
       break;
     case 'START_FREE_TIME':
       requireGm(actor);
-      if (room.phase !== PHASE.STATION_RESULT || room.stationIndex !== 0) throw new Error('第一地獄の駅結果確認中ではありません');
+      if (room.phase !== PHASE.STATION_RESULT || room.stationIndex >= STATIONS.length - 1) throw new Error('自由時間を開始できる駅結果ではありません');
       room.phase = PHASE.FREE_TIME;
       room.timer = { startedAt: Date.now(), endsAt: Date.now() + 300_000 };
       room.players.forEach(player => { player.freeTimeReady = false; player.confirmed = false; });
@@ -195,7 +195,7 @@ export function applyAction(room, actor, action) {
       break;
     case 'START_NEXT_STATION':
       requireGm(actor);
-      if (room.phase !== PHASE.FREE_TIME || room.stationIndex !== 0) throw new Error('第一地獄の自由時間中ではありません');
+      if (room.phase !== PHASE.FREE_TIME || room.stationIndex >= STATIONS.length - 1) throw new Error('次の地獄へ進める自由時間ではありません');
       startNextStation(room);
       break;
     case 'ADVANCE_STATION_INTRODUCTION':
@@ -450,6 +450,8 @@ function resolveTurn(room) {
     attack.actual = actual;
   }
 
+  applyStationDamage(room, attacks);
+
   for (const use of usages.filter(u => !u.invalidated)) {
     let heal = use.card.id === 'healing-blood' || use.card.id === 'regression' ? 2 : use.card.id === 'transfusion' ? 3 : use.card.id === 'alms' ? (snapshot[use.targetId] === 0 ? 3 : 2) : 0;
     if (heal) applyHeal(room, use.player, use.targetId, heal, use.card.id);
@@ -473,6 +475,23 @@ function resolveTurn(room) {
 
 function publicUsage(use) { return { participantId: use.player.participantId, playerNumber: use.player.playerNumber, cardId: use.card.id, targetId: use.targetId }; }
 function recordDamage(source, target, amount) { source.stationStats.damageDealt += amount; source.totalStats.damageDealt += amount; source.stationStats.stationScore += amount; target.stationStats.damageTaken += amount; target.totalStats.damageTaken += amount; }
+function applyStationDamage(room, attacks) {
+  if (STATIONS[room.stationIndex]?.id !== 'needle') return;
+  const focusCounts = new Map();
+  for (const attack of attacks) {
+    if (attack.card.category !== 'attack') continue;
+    focusCounts.set(attack.targetId, (focusCounts.get(attack.targetId) || 0) + 1);
+  }
+  for (const [targetId, count] of focusCounts) {
+    if (count < 2) continue;
+    const target = room.players.find(player => player.participantId === targetId);
+    const before = target.hp;
+    target.hp = Math.max(0, target.hp - 1);
+    const actual = before - target.hp;
+    if (before > 0 && target.hp === 0) target.stationStats.reachedZero = true;
+    event(room, 'STATION_DAMAGE', { stationId: 'needle', targetId, amount: actual, reason: 'NEEDLE_CONCENTRATION' });
+  }
+}
 function damageSelf(room, player, amount, cardId) { const before = player.hp; player.hp = Math.max(0, player.hp - amount); if (before > 0 && player.hp === 0) player.stationStats.reachedZero = true; event(room, 'SELF_DAMAGE', { participantId: player.participantId, cardId, amount: before - player.hp }); }
 function applyHeal(room, source, targetId, amount, cardId, support = true) { const target = room.players.find(p => p.participantId === targetId); const before = target.hp; target.hp = Math.min(15, target.hp + amount); const actual = target.hp - before; if (support && source !== target) { source.stationStats.support += actual; source.totalStats.support += actual; } event(room, 'HEAL', { sourceId: source.participantId, targetId, cardId, amount: actual }); }
 
@@ -615,8 +634,8 @@ function nextTurn(room) {
   if (room.phase !== PHASE.TURN_RESULT) throw new Error('ターン結果確認中ではありません');
   const station = STATIONS[room.stationIndex];
   if (room.stationTurn >= station.turnCount) {
-    if (room.stationIndex === 0) return finishStation(room);
-    throw new Error('現在は第一地獄終了後まで実装済みです');
+    if (room.stationIndex < STATIONS.length - 1) return finishStation(room);
+    throw new Error('無間地獄終了後の処理は未実装です');
   }
   room.stationTurn += 1; room.globalTurnIndex += 1; room.phase = PHASE.TURN_SELECTION; room.revealedUsages = [];
   room.timer = { startedAt: Date.now(), endsAt: Date.now() + station.turnSeconds * 1000 };
