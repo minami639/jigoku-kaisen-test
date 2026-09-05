@@ -495,23 +495,23 @@ function supportOrderIndex(room, participantId) {
 function lastUsage(player, cardId) { return [...player.cardUsage].reverse().find(use => use.cardId === cardId); }
 function cooldownStatus(room, player, cardId) {
   const mark = player.cardMarks[cardId] || {};
-  if (mark.cooldownExtensionUntil >= room.globalTurnIndex) return { code: 'EXTENSION', reason: `強奪によりあと${mark.cooldownExtensionUntil - room.globalTurnIndex + 1}ターン使用不能` };
+  if (mark.cooldownExtensionUntil >= room.globalTurnIndex) return { code: 'EXTENSION', reason: `【強奪】の効果により、あと${mark.cooldownExtensionUntil - room.globalTurnIndex + 1}ターン使用できません。` };
   const last = lastUsage(player, cardId);
-  if (last && last.globalTurnIndex + 1 === room.globalTurnIndex) return { code: 'NORMAL', reason: '前ターンに使用したため通常CT中' };
+  if (last && last.globalTurnIndex + 1 === room.globalTurnIndex) return { code: 'NORMAL', reason: '前のターンに使用したため、このターンは使用できません。' };
   return { code: null, reason: null };
 }
 function cooldownReason(player, cardId, globalTurnIndex) {
   const mark = player.cardMarks[cardId] || {};
-  if (mark.cooldownExtensionUntil >= globalTurnIndex) return `強奪によりあと${mark.cooldownExtensionUntil - globalTurnIndex + 1}ターン使用不能`;
+  if (mark.cooldownExtensionUntil >= globalTurnIndex) return `【強奪】の効果により、あと${mark.cooldownExtensionUntil - globalTurnIndex + 1}ターン使用できません。`;
   const last = lastUsage(player, cardId);
-  return last && last.globalTurnIndex + 1 === globalTurnIndex ? '前ターンに使用したため通常CT中' : null;
+  return last && last.globalTurnIndex + 1 === globalTurnIndex ? '前のターンに使用したため、このターンは使用できません。' : null;
 }
 
 function selectCard(room, actor, action) {
   if (room.phase !== PHASE.TURN_SELECTION || actor.confirmed) throw new Error('現在は選択を変更できません');
   const card = CARD_BY_ID[action.cardId];
   if (!card || card.packId !== actor.packId) throw new Error('自分のパックのカードではありません');
-  if (card.id === 'encore' && !hasEncoreCandidate(room, actor)) throw new Error('再演できる3駅以上前の基本数値効果がありません');
+  if (card.id === 'encore' && !hasEncoreCandidate(room, actor)) throw new Error('再演できる使用履歴がありません。');
   const status = cooldownStatus(room, actor, card.id);
   let ctBypass = null;
   if (status.code === 'EXTENSION') throw new Error(status.reason);
@@ -1302,7 +1302,7 @@ function privatePlayer(player, room) {
       ...(mark.greedyTicketReuseAt === room.globalTurnIndex ? ['GREEDY_TICKET'] : []),
       ...(stationModifiers(room).normalCooldownReuse && !player.hungerReuseUsed ? ['HUNGER'] : [])
     ] : [];
-    return { ...card, unavailableReason: status.code === 'EXTENSION' ? status.reason : card.id === 'encore' && !hasEncoreCandidate(room, player) ? '3駅以上前のコピー候補がありません' : status.code === 'NORMAL' && !bypassOptions.length ? status.reason : null, cooldownStatus: status.code, bypassOptions };
+    return { ...card, unavailableReason: status.code === 'EXTENSION' ? status.reason : card.id === 'encore' && !hasEncoreCandidate(room, player) ? '再演できる使用履歴がありません。' : status.code === 'NORMAL' && !bypassOptions.length ? status.reason : null, cooldownStatus: status.code, bypassOptions };
   });
   const encoreCandidates = player.cardUsage.filter(use => use.stationIndex <= room.stationIndex - 3 && ['attack', 'defense', 'heal'].includes(CARD_BY_ID[use.cardId]?.effect?.kind)).map(use => ({ id: use.id, cardId: use.cardId, cardName: CARD_BY_ID[use.cardId]?.name, kind: CARD_BY_ID[use.cardId]?.effect?.kind }));
   return { participantId: player.participantId, role: 'PL', playerNumber: player.playerNumber, name: player.name, hp: player.hp, packId: player.packId, cards, cardMarks: player.cardMarks, ongoingEffects: player.ongoingEffects, encoreCandidates, hungerReuseUsed: player.hungerReuseUsed, currency: player.currency, shopInventory: player.shopInventory.map(entry => ({ ...entry, item: SHOP_ITEM_BY_ID[entry.itemId] })), purchaseTransactions: room.purchaseTransactions.filter(transaction => transaction.participantId === player.participantId).map(transaction => ({ ...transaction, itemName: SHOP_ITEM_BY_ID[transaction.itemId]?.name })), purchaseNotice: player.purchaseNotice };

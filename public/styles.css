@@ -26,6 +26,8 @@
 .result-cards .result-card.invalidated::after{content:"×";color:#d7b5aa;font-size:24px}
 @media(max-width:520px){.result-cards{grid-template-columns:1fr}.result-cards .result-card{min-height:185px}}
 
+.gm-cooldown{display:grid;gap:3px;margin-top:5px;padding-top:5px;border-top:1px solid #4e4036}.gm-cooldown small{color:var(--muted);font-size:.7rem;letter-spacing:.08em}.gm-cooldown span{color:#efb08f;font-size:.76rem;font-weight:800}
+
 /* カードの情報を読みやすく、手札らしく見せる意匠 */
 .card-hand{gap:14px;align-items:stretch}
 .game-card,.shop-product,.owned-shop-card{position:relative;overflow:hidden;isolation:isolate}

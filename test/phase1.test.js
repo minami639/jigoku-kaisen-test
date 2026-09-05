@@ -180,7 +180,7 @@ test('normal cooldown uses globalTurnIndex across turns', () => {
   players.forEach(player => applyAction(room, player, { type: 'ACK_RESULT' }));
   applyAction(room, room.gm, { type: 'NEXT_TURN' });
   assert.equal(room.globalTurnIndex, 2);
-  assert.throws(() => applyAction(room, players[0], { type: 'SELECT_CARD', cardId: 'flame-strike', targetId: players[1].participantId }), /通常CT/);
+  assert.throws(() => applyAction(room, players[0], { type: 'SELECT_CARD', cardId: 'flame-strike', targetId: players[1].participantId }), /前のターンに使用したため、このターンは使用できません。/);
   applyAction(room, players[0], { type: 'SELECT_CARD', cardId: 'immolation', targetId: players[1].participantId });
   assert.equal(players[0].selection.cardId, 'immolation');
 });

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { applyAction, createTestRoom } from '../src/game.js';
+import { applyAction, createTestRoom, projectState } from '../src/game.js';
 import { CARD_BY_ID, CARDS } from '../src/definitions.js';
 
 const DEFAULTS = ['flame-wall', 'freeze', 'needle-guard', 'healing-blood', 'leftover-shield', 'guard', 'reversal'];
@@ -173,10 +173,22 @@ test('plunder blocks both the normal cooldown turn and the following extension t
   resolve(room, { 4: { cardId: 'plunder', targetId: room.players[0].participantId } });
   assert.equal(room.players[0].cardMarks['flame-wall'].cooldownExtensionUntil, 3);
   applyAction(room, room.gm, { type: 'TEST_JUMP_PHASE', phase: 'TURN_SELECTION', stationIndex: 0, stationTurn: 2 });
-  assert.throws(() => applyAction(room, room.players[0], { type: 'SELECT_CARD', cardId: 'flame-wall', targetId: room.players[1].participantId }), /強奪/);
+  let view = projectState(room, room.players[0]);
+  let flameWall = view.me.cards.find(card => card.id === 'flame-wall');
+  assert.equal(flameWall.cooldownStatus, 'EXTENSION');
+  assert.equal(flameWall.unavailableReason, '【強奪】の効果により、あと2ターン使用できません。');
+  assert.doesNotMatch(flameWall.unavailableReason, /COOLDOWN_EXTENSION/);
+  assert.throws(() => applyAction(room, room.players[0], { type: 'SELECT_CARD', cardId: 'flame-wall', targetId: room.players[1].participantId, ctBypass: 'DESIRE' }), /【強奪】の効果により、あと2ターン使用できません。/);
   applyAction(room, room.gm, { type: 'TEST_JUMP_PHASE', phase: 'TURN_SELECTION', stationIndex: 0, stationTurn: 3 });
+  view = projectState(room, room.players[0]);
+  flameWall = view.me.cards.find(card => card.id === 'flame-wall');
+  assert.equal(flameWall.unavailableReason, '【強奪】の効果により、あと1ターン使用できません。');
   assert.throws(() => applyAction(room, room.players[0], { type: 'SELECT_CARD', cardId: 'flame-wall', targetId: room.players[1].participantId }), /強奪/);
   applyAction(room, room.gm, { type: 'TEST_JUMP_PHASE', phase: 'TURN_SELECTION', stationIndex: 1, stationTurn: 1 });
+  view = projectState(room, room.players[0]);
+  flameWall = view.me.cards.find(card => card.id === 'flame-wall');
+  assert.equal(flameWall.cooldownStatus, null);
+  assert.equal(flameWall.unavailableReason, null);
   assert.doesNotThrow(() => applyAction(room, room.players[0], { type: 'SELECT_CARD', cardId: 'flame-wall', targetId: room.players[1].participantId }));
 });
 
