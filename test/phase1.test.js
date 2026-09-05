@@ -180,6 +180,12 @@ test('test GM can jump freely between phases and station turns', () => {
   assert.equal(room.globalTurnIndex, 15);
   assert.equal(new Set(room.players.map(player => player.packId)).size, 7);
 
+  applyAction(room, room.gm, { type: 'TEST_JUMP_PHASE', phase: 'FREE_TIME', stationIndex: 4, stationTurn: 0 });
+  assert.equal(room.phase, 'FREE_TIME');
+  assert.equal(room.stationTurn, 4);
+  assert.equal(room.globalTurnIndex, 16);
+  assert.ok(room.timer.endsAt - room.timer.startedAt === 300_000);
+
   applyAction(room, room.gm, { type: 'TEST_JUMP_PHASE', phase: 'PACK_SELECTION' });
   assert.equal(room.phase, 'PACK_SELECTION');
   assert.equal(room.stationIndex, -1);
@@ -187,6 +193,14 @@ test('test GM can jump freely between phases and station turns', () => {
 
   const normalRoom = createRoom();
   assert.throws(() => applyAction(normalRoom, normalRoom.gm, { type: 'TEST_JUMP_PHASE', phase: 'INTRODUCTION' }), /テストルーム専用/);
+});
+
+test('test GM can acknowledge every turn result at once', () => {
+  const room = createTestRoom();
+  applyAction(room, room.gm, { type: 'TEST_JUMP_PHASE', phase: 'TURN_RESULT', stationIndex: 0, stationTurn: 1 });
+  assert.ok(room.players.every(player => !player.confirmed));
+  applyAction(room, room.gm, { type: 'TEST_ACK_ALL_RESULTS' });
+  assert.ok(room.players.every(player => player.confirmed));
 });
 
 test('test GM can operate one PL card flow without changing normal permissions', () => {

@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import { CARDS, CARD_BY_ID, PACKS, PACK_BY_ID, STATIONS } from './definitions.js';
 
-export const PHASE = Object.freeze({ LOBBY: 'LOBBY', INTRODUCTION: 'INTRODUCTION', SELF_INTRODUCTION: 'SELF_INTRODUCTION', PACK_SELECTION: 'PACK_SELECTION', TURN_SELECTION: 'TURN_SELECTION', TURN_RESULT: 'TURN_RESULT' });
+export const PHASE = Object.freeze({ LOBBY: 'LOBBY', INTRODUCTION: 'INTRODUCTION', SELF_INTRODUCTION: 'SELF_INTRODUCTION', PACK_SELECTION: 'PACK_SELECTION', TURN_SELECTION: 'TURN_SELECTION', TURN_RESULT: 'TURN_RESULT', FREE_TIME: 'FREE_TIME' });
 const token = () => crypto.randomBytes(24).toString('base64url');
 const id = () => crypto.randomUUID();
 const now = () => new Date().toISOString();
@@ -182,6 +182,13 @@ export function applyAction(room, actor, action) {
         event(room, 'TEST_SELECTION_FILLED', { participantId: player.participantId, cardId: card.id }, 'gm');
       }
       break;
+    case 'TEST_ACK_ALL_RESULTS':
+      requireGm(actor);
+      if (!room.testMode) throw new Error('テストルーム専用操作です');
+      if (room.phase !== PHASE.TURN_RESULT) throw new Error('ターン結果確認中ではありません');
+      room.players.forEach(player => { player.confirmed = true; });
+      event(room, 'TEST_ALL_RESULTS_ACKNOWLEDGED', { players: room.players.length }, 'gm');
+      break;
     case 'TEST_SELECT_PACK': {
       requireGm(actor);
       if (!room.testMode) throw new Error('テストルーム専用操作です');
@@ -231,7 +238,7 @@ export function applyAction(room, actor, action) {
 
 function jumpTestPhase(room, action) {
   const destination = String(action.phase || '');
-  if (![PHASE.INTRODUCTION, PHASE.SELF_INTRODUCTION, PHASE.PACK_SELECTION, PHASE.TURN_SELECTION, PHASE.TURN_RESULT].includes(destination)) throw new Error('移動先フェーズが不正です');
+  if (![PHASE.INTRODUCTION, PHASE.SELF_INTRODUCTION, PHASE.PACK_SELECTION, PHASE.TURN_SELECTION, PHASE.TURN_RESULT, PHASE.FREE_TIME].includes(destination)) throw new Error('移動先フェーズが不正です');
   room.revealedUsages = [];
   for (const player of room.players) { player.selection = null; player.confirmed = false; }
 
@@ -246,11 +253,11 @@ function jumpTestPhase(room, action) {
     const stationIndex = Number(action.stationIndex);
     const station = STATIONS[stationIndex];
     const stationTurn = Number(action.stationTurn);
-    if (!station || !Number.isInteger(stationTurn) || stationTurn < 1 || stationTurn > station.turnCount) throw new Error('駅またはターンが不正です');
+    if (!station || (destination === PHASE.FREE_TIME ? stationIndex >= STATIONS.length - 1 : (!Number.isInteger(stationTurn) || stationTurn < 1 || stationTurn > station.turnCount))) throw new Error('駅またはターンが不正です');
     ensureTestPacks(room);
-    room.phase = destination; room.stationIndex = stationIndex; room.stationTurn = stationTurn;
-    room.globalTurnIndex = STATIONS.slice(0, stationIndex).reduce((sum, item) => sum + item.turnCount, 0) + stationTurn;
-    room.timer = destination === PHASE.TURN_SELECTION ? { startedAt: Date.now(), endsAt: Date.now() + station.turnSeconds * 1000 } : null;
+    room.phase = destination; room.stationIndex = stationIndex; room.stationTurn = destination === PHASE.FREE_TIME ? station.turnCount : stationTurn;
+    room.globalTurnIndex = STATIONS.slice(0, stationIndex).reduce((sum, item) => sum + item.turnCount, 0) + (destination === PHASE.FREE_TIME ? station.turnCount : stationTurn);
+    room.timer = destination === PHASE.TURN_SELECTION ? { startedAt: Date.now(), endsAt: Date.now() + station.turnSeconds * 1000 } : destination === PHASE.FREE_TIME ? { startedAt: Date.now(), endsAt: Date.now() + 300_000 } : null;
   }
   event(room, 'TEST_PHASE_JUMPED', { phase: room.phase, stationIndex: room.stationIndex, stationTurn: room.stationTurn }, 'gm');
 }
