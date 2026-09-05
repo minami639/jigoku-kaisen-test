@@ -247,7 +247,7 @@ test('first-shop purchases atomically exchange five one coins for item and prime
     assert.equal(player.shopInventory[0].itemId, itemId);
     assert.equal(player.shopInventory[0].transactionId, room.purchaseTransactions[0].id);
     assert.equal(room.shopStock[itemId], 0);
-    assert.equal(room.purchaseTransactions[0].cocofoliaApplied, false);
+    assert.equal(room.purchaseTransactions[0].currencyCocofoliaApplied, false);
   }
 });
 
@@ -266,7 +266,7 @@ test('first shop rejects insufficient funds and resolves stock races without rev
   assert.equal(ownerView.me.purchaseTransactions.length, 1);
 });
 
-test('GM can see and acknowledge CCF purchase work while first-purchase scene occurs once', () => {
+test('GM tracks only purchase currency reflection while the shop card remains Web-managed', () => {
   const room = firstShopRoom();
   applyAction(room, room.players[0], { type: 'BUY_SHOP_ITEM', itemId: 'will-o-wisp-amulet', paymentAmount: 5 });
   applyAction(room, room.players[1], { type: 'BUY_SHOP_ITEM', itemId: 'protective-rosary', paymentAmount: 5 });
@@ -275,9 +275,9 @@ test('GM can see and acknowledge CCF purchase work while first-purchase scene oc
   const gmView = projectState(room, room.gm);
   assert.equal(gmView.purchaseTransactions[0].playerName, 'テストPL1');
   assert.equal(gmView.purchaseTransactions[0].itemName, '鬼火のお守り');
-  applyAction(room, room.gm, { type: 'MARK_PURCHASE_APPLIED', transactionId: room.purchaseTransactions[0].id });
-  assert.equal(room.purchaseTransactions[0].cocofoliaApplied, true);
-  assert.equal(room.purchaseTransactions[1].cocofoliaApplied, false);
+  applyAction(room, room.gm, { type: 'MARK_PURCHASE_CURRENCY_APPLIED', transactionId: room.purchaseTransactions[0].id });
+  assert.equal(room.purchaseTransactions[0].currencyCocofoliaApplied, true);
+  assert.equal(room.purchaseTransactions[1].currencyCocofoliaApplied, false);
 });
 
 test('free-time readiness never auto-advances and unused shop cards persist into ice', () => {

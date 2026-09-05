@@ -67,6 +67,9 @@ function ensureRoomState(room) {
   room.currencyTransactions ||= [];
   room.firstPurchaseCompleted ||= false;
   room.stationIntroductionStep ||= 0;
+  for (const transaction of room.purchaseTransactions) {
+    transaction.currencyCocofoliaApplied ??= Boolean(transaction.cocofoliaApplied);
+  }
   for (const player of room.players) {
     player.shopInventory ||= [];
     player.purchaseNotice ||= null;
@@ -202,13 +205,14 @@ export function applyAction(room, actor, action) {
       requireGm(actor);
       advanceStationIntroduction(room);
       break;
-    case 'MARK_PURCHASE_APPLIED': {
+    case 'MARK_PURCHASE_CURRENCY_APPLIED':
+    case 'MARK_PURCHASE_APPLIED': { // 既存ルーム向けの互換アクション
       requireGm(actor);
       const transaction = room.purchaseTransactions.find(item => item.id === action.transactionId);
       if (!transaction) throw new Error('購入取引が見つかりません');
-      transaction.cocofoliaApplied = true;
-      transaction.appliedAt = now();
-      event(room, 'PURCHASE_COCOFOLIA_APPLIED', { transactionId: transaction.id }, 'gm');
+      transaction.currencyCocofoliaApplied = true;
+      transaction.currencyAppliedAt = now();
+      event(room, 'PURCHASE_CURRENCY_COCOFOLIA_APPLIED', { transactionId: transaction.id }, 'gm');
       break;
     }
     case 'APPROVE_TRANSFER':
@@ -543,7 +547,7 @@ function purchaseShopItem(room, player, itemId, requestedPayment) {
   if (change.type) player.currency[change.type] += change.amount;
   player.shopInventory.push({ itemId: item.id, transactionId, used: false, acquiredAt: now() });
   room.shopStock[item.id] -= 1;
-  const transaction = { id: transactionId, participantId: player.participantId, playerNumber: player.playerNumber, itemId: item.id, payment: { one: paymentAmount }, change, cocofoliaApplied: false, createdAt: now() };
+  const transaction = { id: transactionId, participantId: player.participantId, playerNumber: player.playerNumber, itemId: item.id, payment: { one: paymentAmount }, change, currencyCocofoliaApplied: false, createdAt: now() };
   room.purchaseTransactions.push(transaction);
   if (isPrimeChange) room.firstPurchaseCompleted = true;
   player.purchaseNotice = { transactionId, itemId: item.id, firstPurchase: isFirstPurchase };
