@@ -404,6 +404,22 @@ test('War Hell introduction is available before its first turn', () => {
   assert.equal(room.globalTurnIndex, 17);
 });
 
+test('Infinite Hell introduction presents Six-Hell Reenactment before its first turn', () => {
+  const room = createTestRoom();
+  applyAction(room, room.gm, { type: 'TEST_JUMP_PHASE', phase: 'STATION_INTRODUCTION', stationIndex: 6, stationTurn: 0 });
+  const introduction = projectState(room, room.players[0]).stationIntroduction;
+  assert.equal(introduction.title, '第七地獄へ');
+  assert.match(introduction.lines.join('\\n'), /駅固有效果：六獄再演/);
+  assert.match(introduction.lines.join('\\n'), /ランダムに2つの駅固有效果/);
+  assert.match(introduction.lines.join('\\n'), /第七・無間地獄：全5ターン/);
+  assert.doesNotMatch(introduction.lines.join('\\n'), /修羅の戦場/);
+
+  while (room.phase === 'STATION_INTRODUCTION') applyAction(room, room.gm, { type: 'ADVANCE_STATION_INTRODUCTION' });
+  assert.equal(room.phase, 'TURN_SELECTION');
+  assert.equal(room.stationTurn, 1);
+  assert.equal(room.globalTurnIndex, 21);
+});
+
 test('each shop requires its fixed one-coin deposit and grants its defined change', () => {
   const firstRoom = firstShopRoom();
   assert.throws(() => applyAction(firstRoom, firstRoom.players[0], { type: 'BUY_SHOP_ITEM', itemId: 'will-o-wisp-amulet', paymentAmount: 3 }), /壱×5/);
