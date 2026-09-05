@@ -5,7 +5,7 @@ export const PHASE = Object.freeze({ LOBBY: 'LOBBY', INTRODUCTION: 'INTRODUCTION
 const token = () => crypto.randomBytes(24).toString('base64url');
 const id = () => crypto.randomUUID();
 const now = () => new Date().toISOString();
-const INTRODUCTION_STEP_COUNT = 56;
+const INTRODUCTION_STEP_COUNT = 40;
 
 function event(room, type, payload = {}, visibility = 'public') {
   room.events.push({ id: id(), type, payload, visibility, globalTurnIndex: room.globalTurnIndex, at: now() });
@@ -66,7 +66,7 @@ export function applyAction(room, actor, action) {
       if (room.phase !== PHASE.LOBBY) throw new Error('乗車受付フェーズではありません');
       if (room.players.length !== 7) throw new Error('PL7人の参加が必要です');
       room.phase = PHASE.INTRODUCTION;
-      room.introductionStep = 2;
+      room.introductionStep = 1;
       event(room, 'INTRODUCTION_STARTED');
       break;
     case 'ADVANCE_INTRODUCTION':
