@@ -41,6 +41,9 @@
 .game-card.heal{border-color:#4d8959;background:linear-gradient(180deg,#24452b 0 18%,#111a12 18% 100%)}
 .game-card.interference{border-color:#79578e;background:linear-gradient(180deg,#3b2947 0 18%,#19121d 18% 100%)}
 .game-card.support{border-color:#9a783d;background:linear-gradient(180deg,#4b3a1e 0 18%,#1b1710 18% 100%)}
+.game-card.shop{border-color:#b7813c;background:linear-gradient(180deg,#594121 0 18%,#1c150d 18% 100%)}
+.game-card.shop::after{content:"SHOP"}
+.game-card .category.shop{color:#f2c36e}
 .game-card .card-top{position:relative;z-index:1;margin:-2px -2px 9px;padding:7px 8px;border-bottom:1px solid #f2c6733b;background:#0807064d}
 .game-card .category{padding:4px 8px;border:1px solid currentColor;border-radius:999px;background:#0807066b;letter-spacing:.12em}
 .game-card .availability{padding:4px 0;background:transparent;font-weight:700}
@@ -50,6 +53,7 @@
 .game-card.selected{transform:translateY(-5px);border-color:#f0c368;box-shadow:0 13px 0 #080706,0 0 0 2px #d8ad5d38,0 22px 38px #000b}
 .game-card.unavailable{background:#151312;border-color:#5d554f;box-shadow:0 7px 0 #080706;filter:saturate(.18);opacity:.62}
 .game-card.unavailable::after{content:"COOLDOWN";right:8px;bottom:12px;color:#fff1d31f;font-size:9px;letter-spacing:.13em;transform:rotate(-90deg)}
+.game-card.shop.unavailable::after{content:"SHOP"}
 
 .shop-product{min-height:388px;padding:0 18px 18px;border:2px solid #8b673c;border-radius:17px 17px 12px 12px;background:linear-gradient(180deg,#46311f 0 15%,#18120d 15% 100%);box-shadow:0 12px 0 #080706,0 20px 34px #0008}
 .shop-product::after{content:"地獄売店";position:absolute;right:9px;bottom:10px;color:#e5b76522;font:900 10px "Yu Mincho",serif;letter-spacing:.22em;transform:rotate(-90deg);pointer-events:none}
@@ -76,7 +80,7 @@
 .owned-shop-card p{margin:0 3px;color:#dccdbd;font-size:12px;line-height:1.6}
 .owned-shop-card.used{filter:saturate(.25);opacity:.63}
 .owned-shop-card.used .owned-shop-card-top em{border-color:#a9a19a66;color:#c3bbb2}
-.owned-shop-groups{display:grid;gap:16px}.owned-shop-groups>section>h4{margin:0 0 8px;color:var(--gold);font-size:12px;letter-spacing:.14em}.info-shop-controls{margin-top:16px}.info-shop-controls>h3{margin-bottom:5px}.shop-turn-choice{margin:14px 0;padding:12px;border:1px dashed #6c513d;border-radius:10px;background:#130f0d}.shop-result-message{margin:9px 0 0!important;padding:8px!important;border:1px solid #8c6537!important;border-radius:7px!important;background:#24190f!important;color:#f4d17c!important;font-weight:800}
+.owned-shop-groups{display:grid;gap:16px}.owned-shop-groups>section>h4{margin:0 0 8px;color:var(--gold);font-size:12px;letter-spacing:.14em}.game-card .shop-card-target{position:relative;margin:0 3px 10px;font-size:11px}.game-card .shop-card-target select{padding:8px;font-size:12px}.shop-selection-details{margin:14px 0;padding:12px;border:1px solid #6c513d;border-radius:10px;background:#130f0d}.shop-selection-details .meta{margin-bottom:0}.shop-result-message{margin:9px 0 0!important;padding:8px!important;border:1px solid #8c6537!important;border-radius:7px!important;background:#24190f!important;color:#f4d17c!important;font-weight:800}
 @media(max-width:800px){.shop-product{min-height:0}.owned-shop-cards{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:430px){.owned-shop-cards{grid-template-columns:1fr}.game-card{min-height:235px}}
 
