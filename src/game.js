@@ -188,11 +188,11 @@ export function applyAction(room, actor, action) {
     case 'SELECT_PACK': {
       requirePlayer(actor);
       if (room.phase !== PHASE.PACK_SELECTION) throw new Error('パック選択フェーズではありません');
-      if (actor.confirmed) throw new Error('最終確認済みのパックはGMが解除するまで変更できません');
       if (!PACK_BY_ID[action.packId]) throw new Error('存在しないパックです');
       actor.packId = action.packId;
-      actor.confirmed = Boolean(action.confirmed);
-      event(room, 'PACK_SELECTED', { participantId: actor.participantId, confirmed: actor.confirmed }, `private:${actor.participantId}`);
+      // パック選択には個別の最終確認を設けない。開始可否はGMが全員の選択状況で判断する。
+      actor.confirmed = false;
+      event(room, 'PACK_SELECTED', { participantId: actor.participantId }, `private:${actor.participantId}`);
       break;
     }
     case 'CLEAR_PACK_SELECTION':
@@ -408,7 +408,7 @@ export function applyAction(room, actor, action) {
       if (room.phase !== PHASE.PACK_SELECTION) throw new Error('パック選択フェーズではありません');
       const player = room.players.find(p => p.participantId === action.participantId);
       if (!player) throw new Error('対象PLが見つかりません');
-      applyAction(room, player, { type: 'SELECT_PACK', packId: action.packId, confirmed: true });
+      applyAction(room, player, { type: 'SELECT_PACK', packId: action.packId });
       event(room, 'TEST_PACK_ASSIGNED', { participantId: player.participantId, packId: action.packId }, 'gm');
       break;
     }
@@ -423,7 +423,7 @@ export function applyAction(room, actor, action) {
       }
       room.players.forEach((player, index) => {
         player.packId = packs[index];
-        player.confirmed = true;
+        player.confirmed = false;
       });
       event(room, 'TEST_PACKS_AUTOFILLED', { assignments: room.players.map(player => ({ playerNumber: player.playerNumber, packId: player.packId })) }, 'gm');
       break;
@@ -540,8 +540,8 @@ function prepareStationStart(room) {
 
 function startFirstStation(room) {
   if (room.phase !== PHASE.PACK_SELECTION) throw new Error('パック選択フェーズではありません');
-  if (room.players.some(p => !p.confirmed || !p.packId)) throw new Error('全PLのパック確定が必要です');
-  if (new Set(room.players.map(p => p.packId)).size !== 7) throw new Error('カードパックは重複できません');
+  if (room.players.some(p => !p.packId)) throw new Error('全PLの七獄パック選択が必要です');
+  if (new Set(room.players.map(p => p.packId)).size !== 7) throw new Error('七獄パックは重複できません');
   room.stationIndex = 0; room.stationTurn = 0; room.globalTurnIndex = 0; room.phase = PHASE.STATION_INTRODUCTION;
   room.timer = null;
   room.rewardNarrationStep = 0;
@@ -551,7 +551,7 @@ function startFirstStation(room) {
   for (const p of room.players) { p.confirmed = false; p.selection = null; p.stationStats = freshStats(); p.isDeadState = false; p.turnStartDeadState = false; }
   prepareStationStart(room);
   room.stationIntroductionStep = 1;
-  event(room, 'PACKS_CONFIRMED', { packs: room.players.map(p => ({ playerNumber: p.playerNumber, packId: p.packId })) });
+  event(room, 'PACKS_SELECTED', { packs: room.players.map(p => ({ playerNumber: p.playerNumber, packId: p.packId })) });
   event(room, 'STATION_INTRODUCTION_STARTED', { stationId: STATIONS[0].id, stationEffects: activeStationEffectIds(room) });
 }
 

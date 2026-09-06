@@ -14,7 +14,7 @@ function setup() {
   applyAction(room, room.gm, { type: 'START_SELF_INTRODUCTION' });
   completeSelfIntroductions(room);
   applyAction(room, room.gm, { type: 'OPEN_PACK_SELECTION' });
-  players.forEach((player, index) => applyAction(room, player, { type: 'SELECT_PACK', packId: PACKS[index].id, confirmed: true }));
+  players.forEach((player, index) => applyAction(room, player, { type: 'SELECT_PACK', packId: PACKS[index].id }));
   applyAction(room, room.gm, { type: 'START_FIRST_STATION' });
   while (room.phase === 'STATION_INTRODUCTION') applyAction(room, room.gm, { type: 'ADVANCE_STATION_INTRODUCTION' });
   return { room, players };
@@ -38,14 +38,14 @@ test('definitions contain seven packs, 35 cards and 25 configured turns', () => 
   assert.equal(STATIONS.reduce((sum, station) => sum + station.turnCount, 0), 25);
 });
 
-test('pack confirmation shows the first Hell introduction before its first turn', () => {
+test('seven selected packs let the GM open the first Hell introduction', () => {
   const room = createRoom();
   const players = Array.from({ length: 7 }, (_, index) => joinRoom(room, `PL${index + 1}`));
   applyAction(room, room.gm, { type: 'OPEN_INTRODUCTION' });
   applyAction(room, room.gm, { type: 'START_SELF_INTRODUCTION' });
   completeSelfIntroductions(room);
   applyAction(room, room.gm, { type: 'OPEN_PACK_SELECTION' });
-  players.forEach((player, index) => applyAction(room, player, { type: 'SELECT_PACK', packId: PACKS[index].id, confirmed: true }));
+  players.forEach((player, index) => applyAction(room, player, { type: 'SELECT_PACK', packId: PACKS[index].id }));
 
   applyAction(room, room.gm, { type: 'START_FIRST_STATION' });
   assert.equal(room.phase, 'STATION_INTRODUCTION');
@@ -107,11 +107,11 @@ test('exactly seven players join and pack duplication blocks station start', () 
   applyAction(room, room.gm, { type: 'START_SELF_INTRODUCTION' });
   completeSelfIntroductions(room);
   applyAction(room, room.gm, { type: 'OPEN_PACK_SELECTION' });
-  players.forEach(player => applyAction(room, player, { type: 'SELECT_PACK', packId: 'scorch', confirmed: true }));
+  players.forEach(player => applyAction(room, player, { type: 'SELECT_PACK', packId: 'scorch' }));
   assert.throws(() => applyAction(room, room.gm, { type: 'START_FIRST_STATION' }), /重複/);
 });
 
-test('pack choices and confirmation status are visible to every player during pack selection', () => {
+test('pack choices are visible to every player without a separate confirmation step', () => {
   const room = createRoom();
   const players = Array.from({ length: 7 }, (_, index) => joinRoom(room, `PL${index + 1}`));
   applyAction(room, room.gm, { type: 'OPEN_INTRODUCTION' });
@@ -121,7 +121,7 @@ test('pack choices and confirmation status are visible to every player during pa
   applyAction(room, players[0], { type: 'SELECT_PACK', packId: 'scorch', confirmed: true });
   const otherView = projectState(room, players[1]);
   assert.equal(otherView.players[0].packId, 'scorch');
-  assert.equal(otherView.players[0].confirmed, true);
+  assert.equal(otherView.players[0].confirmed, false);
 });
 
 test('a player can clear any pack selection and choose again before the first station starts', () => {
@@ -134,12 +134,12 @@ test('a player can clear any pack selection and choose again before the first st
   completeSelfIntroductions(room);
   applyAction(room, gm, { type: 'OPEN_PACK_SELECTION' });
 
-  applyAction(room, player, { type: 'SELECT_PACK', packId: 'scorch', confirmed: false });
+  applyAction(room, player, { type: 'SELECT_PACK', packId: 'scorch' });
   applyAction(room, player, { type: 'CLEAR_PACK_SELECTION' });
   assert.equal(player.packId, null);
   assert.equal(player.confirmed, false);
 
-  applyAction(room, player, { type: 'SELECT_PACK', packId: 'scorch', confirmed: true });
+  applyAction(room, player, { type: 'SELECT_PACK', packId: 'scorch' });
   applyAction(room, player, { type: 'CLEAR_PACK_SELECTION' });
   assert.equal(player.packId, null);
   assert.equal(player.confirmed, false);
@@ -244,7 +244,7 @@ test('test-room GM can automatically assign all seven packs without duplication'
   completeSelfIntroductions(room);
   applyAction(room, room.gm, { type: 'OPEN_PACK_SELECTION' });
   applyAction(room, room.gm, { type: 'TEST_AUTOFILL_PACKS' });
-  assert.ok(room.players.every(player => player.packId && player.confirmed));
+  assert.ok(room.players.every(player => player.packId && !player.confirmed));
   assert.equal(new Set(room.players.map(player => player.packId)).size, 7);
   assert.equal(room.events.at(-1).type, 'TEST_PACKS_AUTOFILLED');
 });
