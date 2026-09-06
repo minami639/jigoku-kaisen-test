@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="ja">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>地獄廻線</title><link rel="stylesheet" href="/styles.css"><link rel="stylesheet" href="/ticket-layout.css"></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>地獄廻線</title><link rel="stylesheet" href="/styles.css"><link rel="stylesheet" href="/ticket-layout.css"><link rel="stylesheet" href="/self-introduction.css"></head>
 <body>
   <header><div class="brand-lockup"><span class="eyebrow">七つの地獄を、生き残れ</span><h1 class="brand-title"><img src="/assets/jigoku-kaisen-logo.png" alt="地獄廻線"></h1></div><div id="roomBadge"></div></header>
   <main id="app"><section class="panel welcome ticket"><div class="ticket-meta"><span>地獄廻線 乗車券</span></div><h2>乗車口</h2><p>GMは部屋を作成し、PLは共有されたコードで参加します。</p><form id="createForm"><label>GM名<input name="name" required value="GM"></label><button>GMルームを作成</button></form><div class="divider">一人で動作確認</div><button id="testRoom" class="secondary" hidden>テストルームを作成（PL7人自動参加）</button><div class="divider ticket-perforation">または</div><form id="joinForm"><label>ルームコード<input name="code" required maxlength="6"></label><label>PL名<input name="name" required></label><button>列車へ参加</button></form></section></main>
