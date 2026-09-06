@@ -249,7 +249,13 @@ function bindPlayer() { document.querySelector('#selfIntroDone')?.addEventListen
 function bindPack(me, preview) { document.querySelectorAll('[data-pack-choice]').forEach(button => button.addEventListener('click', () => preview ? action('TEST_SELECT_PACK', { participantId: me.participantId, packId: button.dataset.packChoice }) : action('SELECT_PACK', { packId: button.dataset.packChoice, confirmed: false }))); document.querySelector('#packClear')?.addEventListener('click', () => preview ? action('TEST_PLAYER_ACTION', { participantId: me.participantId, playerAction: { type: 'CLEAR_PACK_SELECTION' } }) : action('CLEAR_PACK_SELECTION')); document.querySelector('#packConfirm')?.addEventListener('click', () => !preview && action('SELECT_PACK', { packId: me.packId, confirmed: true })); }
 function playerAction(me, preview, playerAction) { return preview ? action('TEST_PLAYER_ACTION', { participantId: me.participantId, playerAction }) : action(playerAction.type, playerAction); }
 function bindPlaytestSurvey(me, preview) {
-  document.querySelector('#playtestSurvey')?.addEventListener('submit', event => {
+  const surveyForm = document.querySelector('#playtestSurvey');
+  const primeMeaning = surveyForm?.querySelector('[name="primeMeaning"]');
+  if (primeMeaning && !surveyForm.querySelector('[name="primeNoticeTiming"]')) {
+    const answers = surveyAnswersFor(me) || {};
+    primeMeaning.closest('fieldset')?.insertAdjacentHTML('afterend', `<fieldset><legend>Q8補足　気づいたタイミング（任意）</legend>${surveySelect('primeNoticeTiming', [['FIRST_SHOP', '最初のショップ'], ['MIDGAME', '中盤'], ['LATE_GAME', '終盤'], ['FINAL_ALIGNMENT', '最終整線中'], ['AFTER_GAME', 'ゲーム終了後']], answers.primeNoticeTiming)}</fieldset>`);
+  }
+  surveyForm?.addEventListener('submit', event => {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     const answers = {
@@ -257,7 +263,7 @@ function bindPlaytestSurvey(me, preview) {
       difficultCardIds: form.getAll('difficultCardIds'), difficultText: form.get('difficultText'),
       strongCardIds: form.getAll('strongCardIds'), strongText: form.get('strongText'),
       worthwhileShopIds: form.getAll('worthwhileShopIds'), wantedShopIds: form.getAll('wantedShopIds'),
-      shopCount: form.get('shopCount'), primeMeaning: form.get('primeMeaning'), primeSpendingDilemma: form.get('primeSpendingDilemma'), comments: form.get('comments'),
+      shopCount: form.get('shopCount'), primeMeaning: form.get('primeMeaning'), primeNoticeTiming: form.get('primeNoticeTiming'), primeSpendingDilemma: form.get('primeSpendingDilemma'), comments: form.get('comments'),
       blood: { healingBenefit: form.get('bloodHealingBenefit'), healingHelpsOthers: form.get('bloodHealingHelpsOthers'), transfusionCost: form.get('bloodTransfusionCost'), focus: form.get('bloodFocus') },
       lateShop: Object.fromEntries(['enma-eye', 'six-realms-chain', 'infinite-slip'].map(itemId => [itemId, form.getAll(`lateShop-${itemId}`)]))
     };

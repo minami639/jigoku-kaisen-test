@@ -68,6 +68,7 @@ const PLAYTEST_OBSERVATIONS = new Set([
 const PLAYTEST_LATE_SHOPS = new Set(['enma-eye', 'six-realms-chain', 'infinite-slip']);
 const PLAYTEST_LATE_SHOP_CHOICES = new Set(['WANTED', 'NO_CURRENCY', 'WEAK', 'UNCLEAR', 'OTHER_SHOP', 'UNNECESSARY']);
 const PLAYTEST_OBSERVATION_STATUSES = new Set(['UNCONFIRMED', 'YES', 'NO', 'NOTE']);
+const PLAYTEST_PRIME_NOTICE_TIMINGS = new Set(['FIRST_SHOP', 'MIDGAME', 'LATE_GAME', 'FINAL_ALIGNMENT', 'AFTER_GAME']);
 
 function createPlaytestData(roomId = null) {
   const startedAt = now();
@@ -2056,6 +2057,7 @@ function submitPlaytestSurvey(room, player, answers) {
     wantedShopIds: selectedIds(input.wantedShopIds, new Set([...allShopIds].filter(itemId => !ownedShopIds.has(itemId)))),
     shopCount: optionalChoice(input.shopCount, new Set(['TOO_FEW', 'JUST_RIGHT', 'TOO_MANY'])),
     primeMeaning: optionalChoice(input.primeMeaning, new Set(['YES', 'NO', 'NOTICED_DURING'])),
+    primeNoticeTiming: optionalChoice(input.primeNoticeTiming, PLAYTEST_PRIME_NOTICE_TIMINGS),
     primeSpendingDilemma: optionalChoice(input.primeSpendingDilemma, new Set(['YES', 'NO'])),
     comments: optionalText(input.comments),
     blood: player.packId === 'blood' ? {
@@ -2149,6 +2151,7 @@ function refreshPlaytestComparison(room) {
   const responses = room.players.map(player => ({ player, answers: room.playtest.surveys?.[player.participantId] || null }));
   const playersByPack = packId => result.players.filter(player => player.packId === packId);
   const feedbackCount = (itemId, key) => responses.filter(entry => entry.answers?.[key]?.includes(itemId)).length;
+  const allFinalHoldings = result.currencyTimeline.reduce((total, entry) => Object.fromEntries(Object.keys(total).map(type => [type, total[type] + Number(entry.finalHoldings?.[type] || 0)])), { one: 0, two: 0, three: 0, five: 0, seven: 0 });
   result.comparison = {
     schemaVersion: 'v0.3-playtest-comparison',
     session: { roomId: room.id, playtestId: room.playtest.playtestId, startedAt: room.playtest.startedAt, completedAt: room.playtest.completedAt || null, participantCount: room.players.length, status: room.playtest.status, endingId: result.ending?.id || null },
@@ -2181,8 +2184,10 @@ function refreshPlaytestComparison(room) {
     lateShops: Object.fromEntries([...PLAYTEST_LATE_SHOPS].map(itemId => [itemId, Object.fromEntries([...PLAYTEST_LATE_SHOP_CHOICES].map(choice => [choice, responses.filter(entry => entry.answers?.lateShop?.[itemId]?.includes(choice)).length]))])),
     currency: {
       primeMeaningResponses: Object.fromEntries(['YES', 'NO', 'NOTICED_DURING'].map(choice => [choice, responses.filter(entry => entry.answers?.primeMeaning === choice).length])),
+      primeNoticeTimingResponses: Object.fromEntries([...PLAYTEST_PRIME_NOTICE_TIMINGS].map(choice => [choice, responses.filter(entry => entry.answers?.primeNoticeTiming === choice).length])),
       observationStatuses: Object.fromEntries(Object.entries(room.playtest.observations || {}).map(([observationId, observation]) => [observationId, normalizePlaytestObservation(observation)])),
       finalHoldings: result.currencyTimeline.map(entry => ({ participantId: entry.participantId, finalHoldings: entry.finalHoldings })),
+      highestEndPartsHeld: { totals: allFinalHoldings, hasAllRequiredDenominations: allFinalHoldings.two >= 2 && allFinalHoldings.three >= 2 && allFinalHoldings.five >= 1 && allFinalHoldings.seven >= 1 },
       endingId: result.ending?.id || null
     }
   };

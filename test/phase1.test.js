@@ -723,12 +723,13 @@ test('playtest mode records final metrics and keeps optional surveys private to 
     answers: {
       packFun: 4, packStrength: 3, difficultCardIds: ['flame-strike'], strongCardIds: ['not-a-card'],
       worthwhileShopIds: ['not-owned'], wantedShopIds: ['will-o-wisp-amulet'], shopCount: 'JUST_RIGHT',
-      primeMeaning: 'NOTICED_DURING', primeSpendingDilemma: 'YES', comments: 'カードとSHOPを確認した。',
+      primeMeaning: 'NOTICED_DURING', primeNoticeTiming: 'MIDGAME', primeSpendingDilemma: 'YES', comments: 'カードとSHOPを確認した。',
       lateShop: { 'enma-eye': ['WANTED'], 'six-realms-chain': ['UNCLEAR'], 'infinite-slip': ['WEAK'] }
     }
   });
   assert.deepEqual(room.finalRanking, rankingBeforeSurvey);
   assert.equal(room.playtest.surveys[room.players[0].participantId].packFun, 4);
+  assert.equal(room.playtest.surveys[room.players[0].participantId].primeNoticeTiming, 'MIDGAME');
   assert.deepEqual(room.playtest.surveys[room.players[0].participantId].strongCardIds, []);
 
   const ownView = projectState(room, room.players[0]);
@@ -741,6 +742,8 @@ test('playtest mode records final metrics and keeps optional surveys private to 
   assert.equal(gmView.playtest.surveys.find(entry => entry.participantId === room.players[0].participantId).answers.packFun, 4);
   assert.equal(gmView.playtest.finalResult.comparison.packs.length, 7);
   assert.equal(gmView.playtest.finalResult.comparison.currency.observationStatuses.blood_heal_wanted.note, '回復を選択した');
+  assert.equal(gmView.playtest.finalResult.comparison.currency.primeNoticeTimingResponses.MIDGAME, 1);
+  assert.equal(typeof gmView.playtest.finalResult.comparison.currency.highestEndPartsHeld.hasAllRequiredDenominations, 'boolean');
 });
 
 test('normal rooms keep playtest data disabled and survey actions unavailable', () => {
