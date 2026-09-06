@@ -304,6 +304,19 @@ function makeChange(value) {
   return output;
 }
 
+function routePaymentScore(holdings, item, payment) {
+  const change = makeChange(payment.total - item.price);
+  let gained = 0;
+  let lost = 0;
+  for (const type of specialTypes) {
+    const missing = Math.max(0, ROUTE_REQUIREMENTS[type] - holdings[type]);
+    gained += Math.min(missing, change[type]) * CURRENCY_VALUES[type];
+    const protectedCoins = Math.min(ROUTE_REQUIREMENTS[type], holdings[type]);
+    lost += Math.min(protectedCoins, payment.coins[type]) * CURRENCY_VALUES[type];
+  }
+  return gained * 1000 - lost * 2000 - (payment.total - item.price) * 0.1;
+}
+
 function choosePayment(room, player, item, strategy, rng) {
   const candidates = enumeratePayments(player.currency, item.price);
   if (!candidates.length) return null;
@@ -322,11 +335,9 @@ function choosePayment(room, player, item, strategy, rng) {
     if (strategy === 'ROUTE_OPTIMAL') {
       const projected = { ...holdings };
       for (const type of Object.keys(CURRENCY_VALUES)) projected[type] += change[type] - candidate.coins[type];
-      const fulfilled = sum(specialTypes.map(type => Math.min(ROUTE_REQUIREMENTS[type], projected[type])));
-      const missing = sum(specialTypes.map(type => Math.max(0, ROUTE_REQUIREMENTS[type] - projected[type])));
-      const preservesSeven = projected.seven >= ROUTE_REQUIREMENTS.seven ? 1 : 0;
-      // 路線図の必要種類を優先し、必要数を満たした特殊冥貨の再投入を強く避ける。
-      return { candidate, score: fulfilled * 1000 - missing * 100 + preservesSeven * 50 - spentSpecial * 5 + createdSpecial * 2 - (candidate.total - item.price) * 0.05 + rng.next() };
+      const fulfilled = sum(specialTypes.map(type => Math.min(ROUTE_REQUIREMENTS[type], projected[type]) * CURRENCY_VALUES[type]));
+      // 路線図の不足額を埋めるおつりを最優先し、必要数を満たした特殊冥貨の再投入を強く避ける。
+      return { candidate, score: routePaymentScore(holdings, item, candidate) + fulfilled * 10 - spentSpecial * 5 + createdSpecial * 0.1 + rng.next() };
     }
     const wanted = specialTypes.filter(type => !player.currency[type]);
     const createdWanted = sum(wanted.map(type => change[type]));
@@ -372,11 +383,24 @@ function runShopPurchases(room, context) {
     // 1自由時間に全員が買い物をする前提にせず、低価格商品が毎回必ず売り切れる
     // テスト専用の経済にならないよう、戦略ごとに控えめな購入意思を持たせる。
     const tendency = context.paymentStrategy === 'ROUTE_OPTIMAL'
-      ? 0.92
+      ? 1
       : player.simulationStrategy === 'AGGRESSIVE' ? 0.24 : player.simulationStrategy === 'DEFENSIVE' ? 0.20 : player.simulationStrategy === 'BALANCED' ? 0.18 : 0.12;
     if (context.rng.next() > tendency) continue;
-    const item = affordable.map(candidate => ({ item: candidate, score: scorePurchase(candidate, player, player.simulationStrategy, context.rng) })).sort((a, b) => b.score - a.score)[0].item;
-    const payment = choosePayment(room, player, item, context.paymentStrategy, context.rng);
+    let item;
+    let payment;
+    if (context.paymentStrategy === 'ROUTE_OPTIMAL') {
+      const holdings = totalHoldings(room);
+      const plans = affordable.map(candidate => {
+        const nextPayment = choosePayment(room, player, candidate, context.paymentStrategy, context.rng);
+        return { item: candidate, payment: nextPayment, score: nextPayment ? routePaymentScore(holdings, candidate, nextPayment) : -Infinity };
+      }).filter(plan => plan.payment && plan.score > 0).sort((a, b) => b.score - a.score);
+      // 路線図に必要な新しいおつりを作れない支払いは、診断用の最適方針では行わない。
+      if (!plans.length) continue;
+      ({ item, payment } = plans[0]);
+    } else {
+      item = affordable.map(candidate => ({ item: candidate, score: scorePurchase(candidate, player, player.simulationStrategy, context.rng) })).sort((a, b) => b.score - a.score)[0].item;
+      payment = choosePayment(room, player, item, context.paymentStrategy, context.rng);
+    }
     if (!payment) continue;
     applyAction(room, player, { type: 'BUY_SHOP_ITEM', itemId: item.id, payment: payment.coins });
     const transaction = room.purchaseTransactions.at(-1);
@@ -934,7 +958,7 @@ function markdownReport(options, runs, aggregate) {
   const packShopRows = Object.values(aggregate.packs).map(pack => `| ${pack.name} | ${decimal(average(pack.shopPurchases.values))} | ${decimal(average(pack.shopUses.values))} | ${topPurchasedItems(pack)} |`).join('\n');
   const lateShopRows = [3, 4, 5, 6].map(shopNumber => {
     const rows = Object.values(aggregate.shops).filter(shop => shop.shop === shopNumber);
-    return `| 第${shopNumber}SHOP | ${decimal(average(rows.map(shop => shop.purchase)))} | ${rows.map(shop => `${shop.name}: ${shop.purchase}`).join('、')} |`;
+    return `| 第${shopNumber}SHOP | ${decimal(sum(rows.map(shop => shop.purchase)) / (rows.length * runs.length))} | ${rows.map(shop => `${shop.name}: ${decimal(shop.purchase / runs.length)}`).join('、')} |`;
   }).join('\n');
   const failureSignals = economyFailureSignals(runs);
   const reference = legacyReference();
@@ -962,7 +986,7 @@ function markdownReport(options, runs, aggregate) {
 `## 七獄カード別\n\n| パック | カード | 選択/使用 | 使用率（各パック25ターン基準） | 成立 | 不発 | 無効 | 成立率 | 平均実ダメージ | 平均実回復 | 平均実軽減 | 状態付与 |\n|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n${cardRows}\n\n` +
 `## SHOP別\n\n| SHOP | 解禁回数 | 購入可能機会/ゲーム | 購入 | 購入ゲーム率 | 機会あたり購入率 | 平均購入駅 | 使用 | 再使用 | 1購入あたり使用 | 発動 | 不発 | 平均ダメージ増加 | 平均実軽減 | 平均実回復 | 情報使用 |\n|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n${shopRows}\n\n` +
 `### 差別化・情報系SHOPの重点計測\n\n| SHOP | 購入 | 使用 | 1購入あたり使用 | 重点指標 |\n|---|---:|---:|---:|---|\n${specialShopRows}\n\n` +
-`### 後半SHOPの新規商品購入\n\n| 解禁SHOP | 商品あたり平均購入数 | 個別購入数 |\n|---|---:|---|\n${lateShopRows}\n\n` +
+`### 後半SHOPの新規商品購入\n\n| 解禁SHOP | 商品あたり平均購入数/ゲーム | 個別購入数/ゲーム |\n|---|---:|---|\n${lateShopRows}\n\n` +
 `### 自由時間ごとの累計販売候補\n\n| 自由時間 | NEW | 販売中 | SOLD OUT | PL1人あたり購入可能商品 |\n|---|---:|---:|---:|---:|\n${freeTimeRows}\n\n` +
 `### パック別SHOP利用\n\n| パック | 平均SHOP購入 | 平均SHOP使用 | 最頻購入SHOP上位5 |\n|---|---:|---:|---|\n${packShopRows}\n\n` +
 `## 駅別\n\n| 駅 | 開始平均HP | 終了平均HP | 駅中ダメージ | 駅中回復 | HP0人数/ゲーム | 亡者発生率 | 支援賞発生率 | 特殊条件達成率 | 駅スコア平均 | 駅スコア中央値 | ターン平均HP変化 |\n|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n${stationRows}\n\n` +
