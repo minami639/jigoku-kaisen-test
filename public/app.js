@@ -25,7 +25,7 @@ const narrativeParagraphs = (lines, step, attributes = '') => narrativeBlocks(li
 const narrativeProgressHtml = (lines, step) => {
   const total = narrativeBlocks(lines).length;
   const current = Math.min(Math.max(Number(step) || 0, 0), total);
-  return `<div class="narrative-progress" aria-label="読み上げ進行 ${current} / ${total}"><span>READING</span><b>${current} <small>/ ${total}</small></b></div>`;
+  return `<div class="narrative-progress" aria-label="読み上げ進行 ${current} / ${total}"><b>${current} <small>/ ${total}</small></b></div>`;
 };
 const categoryName = value => ({ attack: '攻撃', defense: '防御', support: '補助', heal: '回復', interference: '妨害' }[value] || value);
 const CURRENCY_TYPES = [['one', '壱', 1], ['two', '弐', 2], ['three', '参', 3], ['five', '伍', 5], ['seven', '漆', 7]];
