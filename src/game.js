@@ -1288,7 +1288,8 @@ function engineReactions(room, usages, attacks, modifiers) {
     const hits = attacks.filter(attack => attack.targetId === use.targetId && attack.actual > 0);
     if (!hits.length) continue;
     const attacker = [...hits].sort((a, b) => b.actual - a.actual || a.player.playerNumber - b.player.playerNumber)[0].player;
-    engineReaction(room, use.player, attacker, use.effect.reflection, use.card.id, 'BLOOD_SHIELD', modifiers, usages);
+    const simulationBonus = Number(room.__simulationConfig?.bloodShieldReflectionBonus || 0);
+    engineReaction(room, use.player, attacker, use.effect.reflection + simulationBonus, use.card.id, 'BLOOD_SHIELD', modifiers, usages);
   }
   for (const use of usages.filter(item => item.effect.kind === 'counterStance' && !item.invalidated)) {
     if (attacks.some(attack => attack.player.participantId === use.targetId && attack.targetId === use.player.participantId && attack.actual > 0)) engineReaction(room, use.player, playerById(room, use.targetId), use.effect.damage, use.card.id, 'COUNTER_STANCE', modifiers, usages);
@@ -1313,13 +1314,15 @@ function engineRecovery(room, usages, attacks, snapshot, healReduction, modifier
   for (const use of usages.filter(item => !item.invalidated)) {
     const kind = use.copied?.kind || use.effect.kind;
     let amount = use.copied?.kind === 'heal' ? use.copied.value : use.effect.amount || 0;
+    if (use.card.id === 'healing-blood') amount += Number(room.__simulationConfig?.healingBloodBonus || 0);
     if (use.effect.condition === 'targetHpZero' && snapshot[use.targetId] === 0) amount += use.effect.conditionHeal || 0;
     if (kind === 'heal' && use.shopItem?.effectType === 'ALLY_HEAL_BONUS' && use.targetId !== use.player.participantId) amount += 1;
     if (kind === 'heal' && amount) engineHeal(room, use.player, use.targetId, amount, use.card.id, healReduction, modifiers, 'HEAL', true, use.shopItem?.effectType === 'ALLY_HEAL_BONUS' ? { shopItemId: use.shopItem.id, shopBonusAmount: 1 } : {});
     if (use.effect.absorb) {
       const attack = attacks.find(item => item.use === use);
       const allowed = use.effect.condition !== 'targetHpGreaterThanOwner' || snapshot[use.targetId] > snapshot[use.player.participantId];
-      if (attack?.actual > 0 && allowed) engineHeal(room, use.player, use.player.participantId, use.effect.absorb, use.card.id, healReduction, modifiers, 'ABSORB', false);
+      const absorbAmount = use.effect.absorb + (use.card.id === 'vampire' ? Number(room.__simulationConfig?.vampireAbsorbBonus || 0) : 0);
+      if (attack?.actual > 0 && allowed) engineHeal(room, use.player, use.player.participantId, absorbAmount, use.card.id, healReduction, modifiers, 'ABSORB', false);
     }
   }
 }
@@ -1392,7 +1395,10 @@ function engineCostsMarksAndHistory(room, usages) {
     }
     if (use.effect.kind === 'markEmbers' && !use.invalidated) use.player.cardMarks[use.cardTargetId] = { ...(use.player.cardMarks[use.cardTargetId] || {}), embers: { sourceId: use.player.participantId } };
     if (use.effect.kind === 'markDesire' && !use.invalidated) use.player.cardMarks[use.cardTargetId] = { ...(use.player.cardMarks[use.cardTargetId] || {}), desire: true };
-    const cost = Math.max(use.effect.selfCost || 0, use.scorchCost || 0);
+    const simulationTransfusionCost = use.card.id === 'transfusion'
+      ? Number(room.__simulationConfig?.transfusionSelfCostDelta || 0)
+      : 0;
+    const cost = Math.max(0, Math.max(use.effect.selfCost || 0, use.scorchCost || 0) + simulationTransfusionCost);
     if (cost && !(use.card.id === 'fire-seed' && !use.fireSeedValid)) engineSelfDamage(room, use.player, cost, use.card.id, use.scorchCost ? 'SCORCH_COST' : 'CARD_COST');
     if (use.ctBypass === 'HUNGER') {
       use.player.hungerReuseUsed = true;
@@ -1706,14 +1712,18 @@ function purchaseShopItem(room, player, itemId, requestedPayment) {
   const item = SHOP_ITEM_BY_ID[itemId];
   if (!item || !unlockedShopItems(room).some(candidate => candidate.id === item.id)) throw new Error('まだ解禁されていないショップ商品です');
   if ((room.shopStock[item.id] || 0) < 1) throw new Error('他のプレイヤーが先に購入しました');
+  // バランス検証スクリプトだけが設定する非公開の仮想価格。通常のルームには存在せず、
+  // 正式なSHOP定義・API表示・保存データには一切影響しない。
+  const simulationOffset = room.__simulationConfig?.shopPriceOffsetByShop?.[item.shop] || 0;
+  const effectivePrice = Math.max(0, item.price + simulationOffset);
   const payment = normalizeShopPayment(requestedPayment);
   const paymentTotal = currencyValue(payment);
-  if (paymentTotal < item.price) throw new Error(`投入額があと${item.price - paymentTotal}不足しています`);
-  if (paymentTotal > item.price + 7) throw new Error(`投入額は商品価格より7まで多くできます（現在${paymentTotal}）`);
+  if (paymentTotal < effectivePrice) throw new Error(`投入額があと${effectivePrice - paymentTotal}不足しています`);
+  if (paymentTotal > effectivePrice + 7) throw new Error(`投入額は商品価格より7まで多くできます（現在${paymentTotal}）`);
   for (const type of Object.keys(CURRENCY_VALUES)) {
     if (payment[type] > player.currency[type]) throw new Error(`${CURRENCY_LABELS[type]}の冥貨があと${payment[type] - player.currency[type]}枚必要です`);
   }
-  const change = makeChange(paymentTotal - item.price);
+  const change = makeChange(paymentTotal - effectivePrice);
   const transactionId = id();
   const isPrimeChange = ['two', 'three', 'five', 'seven'].some(type => change.coins[type] > 0);
   const isFirstPurchase = isPrimeChange && !room.firstPurchaseCompleted;
@@ -1721,7 +1731,11 @@ function purchaseShopItem(room, player, itemId, requestedPayment) {
   for (const type of Object.keys(CURRENCY_VALUES)) player.currency[type] += change.coins[type];
   player.shopInventory.push({ inventoryId: id(), itemId: item.id, transactionId, ownerPlayerId: player.participantId, purchased: true, lastUsedGlobalTurnIndex: null, cooldownUntilGlobalTurnIndex: null, totalUseCount: 0, acquiredAt: now() });
   room.shopStock[item.id] -= 1;
-  const transaction = { id: transactionId, participantId: player.participantId, playerNumber: player.playerNumber, itemId: item.id, payment, paymentTotal, change, currencyCocofoliaApplied: false, createdAt: now() };
+  const transaction = {
+    id: transactionId, participantId: player.participantId, playerNumber: player.playerNumber, itemId: item.id,
+    ...(room.__simulationConfig ? { price: effectivePrice } : {}),
+    payment, paymentTotal, change, currencyCocofoliaApplied: false, createdAt: now()
+  };
   room.purchaseTransactions.push(transaction);
   if (isPrimeChange) room.firstPurchaseCompleted = true;
   player.purchaseNotice = { transactionId, itemId: item.id, firstPurchase: isFirstPurchase };
@@ -1828,7 +1842,10 @@ function unlockedShopItems(room) {
   const currentStationIndex = room.stationIndex;
   return SHOP_ITEMS.filter(item => {
     const unlockStationIndex = STATIONS.findIndex(station => station.id === item.unlockAfterStation);
-    return unlockStationIndex >= 0 && unlockStationIndex <= currentStationIndex;
+    const simulatedUnlockIndex = item.shop === 6
+      ? room.__simulationConfig?.shopSixUnlockAtStationIndex
+      : null;
+    return unlockStationIndex >= 0 && (simulatedUnlockIndex ?? unlockStationIndex) <= currentStationIndex;
   });
 }
 

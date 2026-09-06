@@ -141,6 +141,18 @@ function scoreCard(room, player, card, strategy, rng) {
   const hp = player.hp;
   let score = rng.next() * 1.25;
   if (strategy === 'RANDOM') return score;
+  // 血の池パックだけを対象にした診断AI。通常の4戦略には影響しない。
+  if (player.packId === 'blood' && strategy.startsWith('BLOOD_')) {
+    const weights = strategy === 'BLOOD_SELFISH'
+      ? { vampire: 12, 'blood-murk': 6, 'blood-shield': hp <= 8 ? 8 : 4, 'healing-blood': hp <= 4 ? 3 : -1, transfusion: hp <= 4 ? 2 : -2 }
+      : strategy === 'BLOOD_SUPPORT'
+        ? { vampire: 3, 'blood-murk': 4, 'blood-shield': 8, 'healing-blood': 12, transfusion: 11 }
+        : { vampire: 8, 'blood-murk': 5, 'blood-shield': hp <= 8 ? 7 : 5, 'healing-blood': 8, transfusion: 7 };
+    score += weights[card.id] || 0;
+    if (strategy === 'BLOOD_SUPPORT' && (card.category === 'heal' || card.id === 'blood-shield')) score += 2;
+    if (strategy === 'BLOOD_SELFISH' && card.id === 'vampire' && hp <= 8) score += 4;
+    return score;
+  }
   if (card.category === 'attack') score += strategy === 'AGGRESSIVE' ? 8 : strategy === 'DEFENSIVE' ? 1 : 5;
   if (card.category === 'interference') score += strategy === 'AGGRESSIVE' ? 5 : 2.5;
   if (card.category === 'defense') score += strategy === 'DEFENSIVE' ? 8 : hp <= 6 ? 6 : 2;
@@ -361,8 +373,13 @@ function scorePurchase(item, player, strategy, rng) {
 
 function runShopPurchases(room, context) {
   const shopTelemetry = context.shopTelemetry;
-  const unlocked = SHOP_ITEMS.filter(item => item.unlockAfterStation && item.shop <= room.stationIndex + 1);
-  const newlyUnlocked = unlocked.filter(item => item.shop === room.stationIndex + 1);
+  context.shopDecisionEvents ||= [];
+  context.shopAffordabilityEvents ||= [];
+  const unlockAt = item => item.shop === 6 && context.options?.shopSixUnlockAtStationIndex != null
+    ? context.options.shopSixUnlockAtStationIndex + 1
+    : item.shop;
+  const unlocked = SHOP_ITEMS.filter(item => item.unlockAfterStation && unlockAt(item) <= room.stationIndex + 1);
+  const newlyUnlocked = unlocked.filter(item => unlockAt(item) === room.stationIndex + 1);
   for (const item of newlyUnlocked) shopTelemetry.byItem[item.id].unlockCount += 1;
   const freeTime = {
     stationIndex: room.stationIndex,
@@ -375,34 +392,72 @@ function runShopPurchases(room, context) {
   recordRouteThreshold(context, room);
   const order = context.rng.shuffle(room.players);
   for (const player of order) {
-    const available = SHOP_ITEMS.filter(item => item.unlockAfterStation && (room.shopStock[item.id] || 0) > 0 && item.shop <= room.stationIndex + 1 && !player.shopInventory.some(entry => entry.itemId === item.id));
-    const affordable = available.filter(item => enumeratePayments(player.currency, item.price).length);
+    const available = SHOP_ITEMS.filter(item => item.unlockAfterStation && (room.shopStock[item.id] || 0) > 0 && unlockAt(item) <= room.stationIndex + 1 && !player.shopInventory.some(entry => entry.itemId === item.id));
+    const effectiveItem = item => item.shop === 6 && context.options?.shopPriceOffset != null ? { ...item, price: Math.max(0, item.price + context.options.shopPriceOffset) } : item;
+    const affordable = available.filter(item => enumeratePayments(player.currency, effectiveItem(item).price).length);
+    const affinityIds = new Set(['red-bandage', 'protective-rosary', 'shared-life-cup', 'bloodstop-charm', 'war-mask', 'battle-medicine']);
+    for (const affinityId of affinityIds) {
+      const affinityItem = SHOP_ITEMS.find(item => item.id === affinityId);
+      if (!affinityItem || unlockAt(affinityItem) > room.stationIndex + 1 || player.shopInventory.some(entry => entry.itemId === affinityId)) continue;
+      const status = (room.shopStock[affinityId] || 0) <= 0
+        ? 'SOLD_OUT'
+        : affordable.some(item => item.id === affinityId) ? 'AFFORDABLE' : 'INSUFFICIENT_CURRENCY';
+      context.shopAffordabilityEvents.push({ participantId: player.participantId, playerNumber: player.playerNumber, itemId: affinityId, status, stationIndex: room.stationIndex });
+    }
+    const lateItems = SHOP_ITEMS.filter(item => item.shop === 6 && unlockAt(item) <= room.stationIndex + 1 && !player.shopInventory.some(entry => entry.itemId === item.id));
+    const hasSimilarLateShop = item => {
+      const similarIds = item.id === 'enma-eye'
+        ? ['demon-eye', 'blood-divination-needle']
+        : item.id === 'six-realms-chain'
+          ? ['decoy-doll', 'hell-chain']
+          : [];
+      return player.shopInventory.some(entry => similarIds.includes(entry.itemId));
+    };
+    const decisionFor = item => {
+      if ((room.shopStock[item.id] || 0) <= 0) return 'SOLD_OUT';
+      return affordable.some(candidate => candidate.id === item.id) ? 'AFFORDABLE' : 'INSUFFICIENT_CURRENCY';
+    };
     freeTime.purchasableCounts.push(affordable.length);
     for (const item of affordable) shopTelemetry.byItem[item.id].purchaseOpportunityCount += 1;
-    if (!affordable.length) continue;
+    if (!affordable.length) {
+      for (const item of lateItems) context.shopDecisionEvents.push({ participantId: player.participantId, playerNumber: player.playerNumber, stationIndex: room.stationIndex, itemId: item.id, status: decisionFor(item), selectedItemId: null, hasSimilarOwned: hasSimilarLateShop(item), remainingTurns: STATIONS.slice(room.stationIndex + 1).reduce((total, station) => total + station.turnCount, 0) });
+      continue;
+    }
     // 1自由時間に全員が買い物をする前提にせず、低価格商品が毎回必ず売り切れる
     // テスト専用の経済にならないよう、戦略ごとに控えめな購入意思を持たせる。
     const tendency = context.paymentStrategy === 'ROUTE_OPTIMAL'
       ? 1
-      : player.simulationStrategy === 'AGGRESSIVE' ? 0.24 : player.simulationStrategy === 'DEFENSIVE' ? 0.20 : player.simulationStrategy === 'BALANCED' ? 0.18 : 0.12;
-    if (context.rng.next() > tendency) continue;
+      : player.simulationStrategy === 'AGGRESSIVE' ? 0.24 : player.simulationStrategy === 'DEFENSIVE' ? 0.20 : (player.simulationStrategy === 'BALANCED' || player.simulationStrategy.startsWith('BLOOD_')) ? 0.18 : 0.12;
+    if (context.rng.next() > tendency) {
+      for (const item of lateItems) context.shopDecisionEvents.push({ participantId: player.participantId, playerNumber: player.playerNumber, stationIndex: room.stationIndex, itemId: item.id, status: decisionFor(item) === 'AFFORDABLE' ? 'AFFORDABLE_SKIPPED' : decisionFor(item), selectedItemId: null, hasSimilarOwned: hasSimilarLateShop(item), remainingTurns: STATIONS.slice(room.stationIndex + 1).reduce((total, station) => total + station.turnCount, 0) });
+      continue;
+    }
     let item;
     let payment;
     if (context.paymentStrategy === 'ROUTE_OPTIMAL') {
       const holdings = totalHoldings(room);
       const plans = affordable.map(candidate => {
-        const nextPayment = choosePayment(room, player, candidate, context.paymentStrategy, context.rng);
-        return { item: candidate, payment: nextPayment, score: nextPayment ? routePaymentScore(holdings, candidate, nextPayment) : -Infinity };
+        const pricedCandidate = effectiveItem(candidate);
+        const nextPayment = choosePayment(room, player, pricedCandidate, context.paymentStrategy, context.rng);
+        return { item: candidate, payment: nextPayment, score: nextPayment ? routePaymentScore(holdings, pricedCandidate, nextPayment) : -Infinity };
       }).filter(plan => plan.payment && plan.score > 0).sort((a, b) => b.score - a.score);
       // 路線図に必要な新しいおつりを作れない支払いは、診断用の最適方針では行わない。
-      if (!plans.length) continue;
+      if (!plans.length) {
+        for (const item of lateItems) context.shopDecisionEvents.push({ participantId: player.participantId, playerNumber: player.playerNumber, stationIndex: room.stationIndex, itemId: item.id, status: decisionFor(item) === 'AFFORDABLE' ? 'AFFORDABLE_SKIPPED' : decisionFor(item), selectedItemId: null, hasSimilarOwned: hasSimilarLateShop(item), remainingTurns: STATIONS.slice(room.stationIndex + 1).reduce((total, station) => total + station.turnCount, 0) });
+        continue;
+      }
       ({ item, payment } = plans[0]);
     } else {
-      item = affordable.map(candidate => ({ item: candidate, score: scorePurchase(candidate, player, player.simulationStrategy, context.rng) })).sort((a, b) => b.score - a.score)[0].item;
-      payment = choosePayment(room, player, item, context.paymentStrategy, context.rng);
+      item = affordable.map(candidate => ({ item: candidate, score: scorePurchase(effectiveItem(candidate), player, player.simulationStrategy, context.rng) })).sort((a, b) => b.score - a.score)[0].item;
+      payment = choosePayment(room, player, effectiveItem(item), context.paymentStrategy, context.rng);
     }
     if (!payment) continue;
     applyAction(room, player, { type: 'BUY_SHOP_ITEM', itemId: item.id, payment: payment.coins });
+    for (const lateItem of lateItems) {
+      const original = decisionFor(lateItem);
+      const status = lateItem.id === item.id ? 'PURCHASED' : original === 'AFFORDABLE' ? 'OTHER_SHOP_CHOSEN' : original;
+      context.shopDecisionEvents.push({ participantId: player.participantId, playerNumber: player.playerNumber, stationIndex: room.stationIndex, itemId: lateItem.id, status, selectedItemId: item.id, hasSimilarOwned: hasSimilarLateShop(lateItem), remainingTurns: STATIONS.slice(room.stationIndex + 1).reduce((total, station) => total + station.turnCount, 0) });
+    }
     const transaction = room.purchaseTransactions.at(-1);
     const itemTelemetry = shopTelemetry.byItem[item.id];
     itemTelemetry.purchaseStations.push(room.stationIndex + 1);
@@ -483,7 +538,7 @@ function invariantViolations(room) {
     if (duplicateItems.length) problems.push(`PL${player.playerNumber} SHOP重複所有=${duplicateItems.join(',')}`);
   }
   const ownedItems = room.players.flatMap(player => player.shopInventory.map(entry => entry.itemId));
-  if (new Set(ownedItems).size !== ownedItems.length) problems.push('同一SHOP商品の複数所有');
+  if (new Set(ownedItems).size !== ownedItems.length && !room.__simulationConfig?.allowDiagnosticShopDuplicates) problems.push('同一SHOP商品の複数所有');
   const shopUses = new Map();
   for (const event of room.events.filter(event => event.type === 'SHOP_USED')) {
     const key = `${event.payload.participantId}:${event.payload.globalTurnIndex}`;
@@ -501,13 +556,16 @@ function invariantViolations(room) {
   return [...new Set(problems)];
 }
 
-function startGame(runIndex, seed, rng) {
+function startGame(runIndex, seed, rng, options = {}) {
   const room = createTestRoom(`SIM GM ${runIndex + 1}`);
   room.randomInt = max => rng.int(max);
+  if (options.simulationConfig) room.__simulationConfig = structuredClone(options.simulationConfig);
   applyAction(room, room.gm, { type: 'TEST_JUMP_PHASE', phase: PHASE.PACK_SELECTION });
-  const packs = stablePackAssignment(runIndex);
+  const packs = options.packAssignments || stablePackAssignment(runIndex);
   room.players.forEach((player, playerIndex) => {
-    player.simulationStrategy = playerStrategy(runIndex, playerIndex);
+    player.simulationStrategy = packs[playerIndex] === 'blood' && options.bloodStrategy
+      ? options.bloodStrategy
+      : playerStrategy(runIndex, playerIndex);
     applyAction(room, room.gm, { type: 'TEST_SELECT_PACK', participantId: player.participantId, packId: packs[playerIndex] });
   });
   applyAction(room, room.gm, { type: 'START_FIRST_STATION' });
@@ -535,6 +593,24 @@ function completeStationFlow(room, context, telemetry) {
     applyAction(room, room.gm, { type: 'ADVANCE_FREE_TIME_INTRODUCTION' });
   }
   runShopPurchases(room, context);
+  // 第六SHOPの価値を測る診断用。購入・在庫を介さず、無間開始時だけ全PLへ
+  // 同一カードを仮想所持させる。通常ゲームには context.options が無いため作用しない。
+  if (STATIONS[room.stationIndex].id === 'war' && context.options?.forceLateShopItem) {
+    const itemId = context.options.forceLateShopItem;
+    for (const player of room.players) {
+      if (player.shopInventory.some(entry => entry.itemId === itemId)) continue;
+      player.shopInventory.push({
+        inventoryId: `simulation-${itemId}-${player.playerNumber}`,
+        itemId,
+        ownerPlayerId: player.participantId,
+        purchased: true,
+        lastUsedGlobalTurnIndex: null,
+        cooldownUntilGlobalTurnIndex: null,
+        totalUseCount: 0,
+        acquiredAt: 'simulation'
+      });
+    }
+  }
   applyAction(room, room.gm, { type: 'START_NEXT_STATION' });
   advanceStationIntroduction(room);
   return { telemetry: finalTelemetry, finished: false };
@@ -576,23 +652,44 @@ function summarizeSingleRun(room, context, telemetry) {
     heavenPartsAvailable: totalHoldings.two >= 2 && totalHoldings.three >= 2 && totalHoldings.five >= 1,
     bestEndPartsAvailable: totalHoldings.two >= 2 && totalHoldings.three >= 2 && totalHoldings.five >= 1 && totalHoldings.seven >= 1,
     invariantViolations: invariantViolations(room),
-    cardEvents: room.events.filter(event => ['DIRECT_DAMAGE', 'REACTION_DAMAGE', 'HEAL', 'DEFENSE_APPLIED', 'CARRY_STATE_ADDED'].includes(event.type)).map(event => ({ type: event.type, payload: event.payload })),
+    cardEvents: room.events.filter(event => ['DIRECT_DAMAGE', 'REACTION_DAMAGE', 'HEAL', 'DEFENSE_APPLIED', 'CARRY_STATE_ADDED', 'SELF_DAMAGE', 'SUPPORT_RECORDED', 'ATTACK_COMPONENT_NULLIFIED', 'CARRY_COMPONENT_NULLIFIED', 'TARGET_CHANGED_RANDOM'].includes(event.type)).map(event => ({ type: event.type, payload: event.payload, globalTurnIndex: event.globalTurnIndex })),
     cardUsages: room.players.flatMap(player => player.cardUsage.map(use => ({ ...use, packId: player.packId, playerNumber: player.playerNumber }))),
     purchaseTransactions: room.purchaseTransactions.map(transaction => ({ participantId: transaction.participantId, itemId: transaction.itemId, stationIndex: transaction.stationIndex, payment: transaction.payment, change: transaction.change })),
     shopUseEvents: room.events.filter(event => ['SHOP_USED', 'SHOP_EFFECT_APPLIED', 'SHOP_EFFECT_FAILED', 'SHOP_DAMAGE', 'SHOP_INFORMATION_REVEALED'].includes(event.type)).map(event => ({ type: event.type, payload: event.payload, globalTurnIndex: event.globalTurnIndex })),
+    shopDecisionEvents: context.shopDecisionEvents || [],
+    shopAffordabilityEvents: context.shopAffordabilityEvents || [],
     finalRanking: room.finalRanking || []
   };
 }
 
-function runSingleGame(runIndex, seed, forcedPaymentStrategy = null) {
+function runSingleGame(runIndex, seed, forcedPaymentStrategy = null, options = {}) {
   const rng = createRng(seed);
-  const context = { runIndex, seed, rng, paymentStrategy: forcedPaymentStrategy || PAYMENT_STRATEGIES[runIndex % PAYMENT_STRATEGIES.length], shopTelemetry: createShopTelemetry() };
-  const room = startGame(runIndex, seed, rng);
+  const simulationConfig = {
+    ...(options.simulationConfig || {}),
+    ...(options.shopSixUnlockAtStationIndex != null ? { shopSixUnlockAtStationIndex: options.shopSixUnlockAtStationIndex } : {}),
+    ...(options.shopPriceOffset != null ? { shopPriceOffsetByShop: { 6: options.shopPriceOffset } } : {}),
+    ...(options.forceLateShopItem ? { allowDiagnosticShopDuplicates: true } : {})
+  };
+  const normalizedOptions = { ...options, simulationConfig };
+  const context = { runIndex, seed, rng, paymentStrategy: forcedPaymentStrategy || PAYMENT_STRATEGIES[runIndex % PAYMENT_STRATEGIES.length], shopTelemetry: createShopTelemetry(), options: normalizedOptions };
+  const room = startGame(runIndex, seed, rng, normalizedOptions);
   const telemetry = [currentStationTelemetry(room)];
   const projectionProblems = [];
+  const cardAvailability = [];
   let processed = 0;
   while (processed < 25) {
     if (room.phase !== PHASE.TURN_SELECTION) throw new Error(`T${processed + 1}がカード選択フェーズではありません: ${room.phase}`);
+    for (const player of room.players) {
+      const cards = projectState(room, player).me.cards;
+      cardAvailability.push({
+        playerNumber: player.playerNumber,
+        packId: player.packId,
+        globalTurnIndex: room.globalTurnIndex,
+        availableCardIds: cards.filter(card => !card.cooldownStatus && cardIsFeasible(room, player, card)).map(card => card.id),
+        normalCooldownCardIds: cards.filter(card => card.cooldownStatus === 'NORMAL').map(card => card.id),
+        extensionCardIds: cards.filter(card => card.cooldownStatus === 'EXTENSION').map(card => card.id)
+      });
+    }
     for (const player of room.players) chooseAndConfirm(room, player, player.simulationStrategy, rng);
     projectionProblems.push(...projectionViolations(room));
     const beforeHp = Object.fromEntries(room.players.map(player => [player.participantId, player.hp]));
@@ -609,6 +706,7 @@ function runSingleGame(runIndex, seed, forcedPaymentStrategy = null) {
   }
   if (room.phase !== PHASE.FINAL_RANKING) throw new Error(`最終駅の結果処理が完了していません: ${room.phase}`);
   const summary = summarizeSingleRun(room, context, telemetry);
+  summary.cardAvailability = cardAvailability;
   summary.invariantViolations.push(...projectionProblems);
   summary.invariantViolations = [...new Set(summary.invariantViolations)];
   return summary;
@@ -1047,4 +1145,9 @@ function main() {
   if (aggregate.invariantViolations.length) process.exitCode = 1;
 }
 
-main();
+const isDirectExecution = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (isDirectExecution) main();
+
+// 追加の診断スクリプトが、正式な通常シミュレーションと同一の行動・決済・進行を
+// 再利用するための限定公開。PL向けアプリケーションからは参照されない。
+export { runSingleGame, CURRENCY_VALUES };
