@@ -691,90 +691,7 @@ test('Infinite Hell announces support and special outcomes without creating curr
   assert.equal(room.finalEnding.title, '地獄廻線');
 });
 
-test('playtest mode records final metrics and keeps optional surveys private to each player', () => {
-  const room = createTestRoom();
-  assert.equal(room.playtestMode, true);
-  applyAction(room, room.gm, { type: 'SET_PLAYTEST_OBSERVATION', observationId: 'blood_heal_wanted', status: 'YES', note: '回復を選択した' });
-  applyAction(room, room.gm, { type: 'TEST_JUMP_PHASE', phase: 'TURN_RESULT', stationIndex: 6, stationTurn: 5 });
-  room.players[0].totalStats.damageDealt = 7;
-  room.players[0].totalStats.support = 3;
-  room.players[0].cardUsage = [{ id: 'usage-1', cardId: 'flame-strike', stationId: 'scorch', stationIndex: 0, stationTurn: 1, globalTurnIndex: 1, result: 'RESOLVED', finalTarget: room.players[1].participantId }];
-  applyAction(room, room.gm, { type: 'TEST_ACK_ALL_RESULTS' });
-  applyAction(room, room.gm, { type: 'NEXT_TURN' });
-  applyAction(room, room.gm, { type: 'START_REWARD_NARRATION' });
-  while (room.phase === 'REWARD_NARRATION') applyAction(room, room.gm, { type: 'ADVANCE_REWARD_NARRATION' });
-  applyAction(room, room.gm, { type: 'START_FINAL_ALIGNMENT' });
-  applyAction(room, room.gm, { type: 'START_FINAL_JUDGMENT' });
-  applyAction(room, room.gm, { type: 'CONFIRM_FINAL_ENDING', endingId: 'HELL_LOOP' });
-
-  assert.equal(room.phase, 'ENDING');
-  assert.equal(room.playtest.finalResult.ending.id, 'HELL_LOOP');
-  assert.equal(room.playtest.finalResult.players.length, 7);
-  assert.equal(room.playtest.finalResult.players[0].totalDamageDealt, 7);
-  assert.deepEqual(room.playtest.observations.blood_heal_wanted, { status: 'YES', note: '回復を選択した', updatedAt: room.playtest.observations.blood_heal_wanted.updatedAt });
-  assert.equal(room.playtest.finalResult.roomId, room.id);
-  assert.equal(room.playtest.finalResult.playtestId, room.playtest.playtestId);
-  assert.equal(room.playtest.finalResult.status, 'COMPLETED');
-
-  const rankingBeforeSurvey = structuredClone(room.finalRanking);
-  applyAction(room, room.players[0], {
-    type: 'SUBMIT_PLAYTEST_SURVEY',
-    answers: {
-      packFun: 4, packStrength: 3, difficultCardIds: ['flame-strike'], strongCardIds: ['not-a-card'],
-      worthwhileShopIds: ['not-owned'], wantedShopIds: ['will-o-wisp-amulet'], shopCount: 'JUST_RIGHT',
-      primeMeaning: 'NOTICED_DURING', primeNoticeTiming: 'MIDGAME', primeSpendingDilemma: 'YES', comments: 'カードとSHOPを確認した。',
-      lateShop: { 'enma-eye': ['WANTED'], 'six-realms-chain': ['UNCLEAR'], 'infinite-slip': ['WEAK'] }
-    }
-  });
-  assert.deepEqual(room.finalRanking, rankingBeforeSurvey);
-  assert.equal(room.playtest.surveys[room.players[0].participantId].packFun, 4);
-  assert.equal(room.playtest.surveys[room.players[0].participantId].primeNoticeTiming, 'MIDGAME');
-  assert.deepEqual(room.playtest.surveys[room.players[0].participantId].strongCardIds, []);
-
-  const ownView = projectState(room, room.players[0]);
-  const otherView = projectState(room, room.players[1]);
-  const gmView = projectState(room, room.gm);
-  assert.equal(ownView.playtest.survey.comments, 'カードとSHOPを確認した。');
-  assert.equal(otherView.playtest.survey, null);
-  assert.equal('finalResult' in otherView.playtest, false);
-  assert.equal(gmView.playtest.finalResult.players.length, 7);
-  assert.equal(gmView.playtest.surveys.find(entry => entry.participantId === room.players[0].participantId).answers.packFun, 4);
-  assert.equal(gmView.playtest.finalResult.comparison.packs.length, 7);
-  assert.equal(gmView.playtest.finalResult.comparison.currency.observationStatuses.blood_heal_wanted.note, '回復を選択した');
-  assert.equal(gmView.playtest.finalResult.comparison.currency.primeNoticeTimingResponses.MIDGAME, 1);
-  assert.equal(typeof gmView.playtest.finalResult.comparison.currency.highestEndPartsHeld.hasAllRequiredDenominations, 'boolean');
-});
-
-test('normal rooms keep playtest data disabled and survey actions unavailable', () => {
-  const room = createRoom();
-  assert.equal(projectState(room, room.gm).playtest, null);
-  assert.throws(() => applyAction(room, room.gm, { type: 'SET_PLAYTEST_OBSERVATION', observationId: 'blood_heal_wanted', checked: true }), /有効ではありません/);
-});
-
-test('playtest observations support one-click status and optional memo without affecting the game state', () => {
-  const room = createTestRoom();
-  const before = { hp: room.players.map(player => player.hp), stock: structuredClone(room.shopStock), globalTurnIndex: room.globalTurnIndex };
-  applyAction(room, room.gm, { type: 'SET_PLAYTEST_OBSERVATION', observationId: 'shop6_currency_saved', status: 'NOTE', note: 'PL4が漆を残す相談をした' });
-  assert.equal(room.playtest.observations.shop6_currency_saved.status, 'NOTE');
-  assert.equal(room.playtest.observations.shop6_currency_saved.note, 'PL4が漆を残す相談をした');
-  assert.deepEqual({ hp: room.players.map(player => player.hp), stock: room.shopStock, globalTurnIndex: room.globalTurnIndex }, before);
-  assert.throws(() => applyAction(room, room.gm, { type: 'SET_PLAYTEST_OBSERVATION', observationId: 'shop6_currency_saved', status: 'INVALID' }), /状態が不正/);
-});
-
-test('GM can retain and export-compatible record an interrupted playtest without changing the game phase', () => {
-  const room = createTestRoom();
-  const phaseBefore = room.phase;
-  applyAction(room, room.gm, { type: 'MARK_PLAYTEST_INTERRUPTED' });
-  assert.equal(room.phase, phaseBefore);
-  assert.equal(room.playtest.status, 'INTERRUPTED');
-  assert.equal(room.playtest.finalResult.status, 'INTERRUPTED');
-  assert.equal(room.playtest.finalResult.ending, null);
-  const gmView = projectState(room, room.gm);
-  assert.equal(gmView.playtest.session.status, 'INTERRUPTED');
-  assert.equal(gmView.playtest.finalResult.comparison.session.status, 'INTERRUPTED');
-});
-
-test('test-mode playthrough reaches the optional survey and GM result after all 25 turns', () => {
+test('test-mode playthrough reaches the final result after all 25 turns', () => {
   const room = createTestRoom();
   applyAction(room, room.gm, { type: 'TEST_JUMP_PHASE', phase: 'PACK_SELECTION' });
   applyAction(room, room.gm, { type: 'TEST_AUTOFILL_PACKS' });
@@ -803,7 +720,6 @@ test('test-mode playthrough reaches the optional survey and GM result after all 
   applyAction(room, room.gm, { type: 'START_FINAL_ALIGNMENT' });
   applyAction(room, room.gm, { type: 'START_FINAL_JUDGMENT' });
   applyAction(room, room.gm, { type: 'CONFIRM_FINAL_ENDING', endingId: 'HELL_LOOP' });
-  applyAction(room, room.players[0], { type: 'SUBMIT_PLAYTEST_SURVEY', answers: { packFun: 5, lateShop: {} } });
-  assert.equal(room.playtest.finalResult.players.reduce((total, player) => total + player.sevenCardUsage.length, 0) > 0, true);
-  assert.equal(projectState(room, room.gm).playtest.surveys[0].answers.packFun, 5);
+  assert.equal(room.phase, 'ENDING');
+  assert.equal(room.finalEnding.id, 'HELL_LOOP');
 });

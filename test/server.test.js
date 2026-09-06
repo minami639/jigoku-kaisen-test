@@ -47,19 +47,6 @@ test('test-room API creates GM plus seven players only when explicitly enabled',
   });
 });
 
-test('GM can enable optional playtest recording when creating a room', async () => {
-  await withServer({ allowTestRooms: false }, async origin => {
-    const created = await fetch(`${origin}/api/rooms`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: '記録GM', playtestMode: true }) });
-    assert.equal(created.status, 201);
-    const session = await created.json();
-    assert.equal(session.playtestMode, true);
-    const state = await fetch(`${origin}/api/rooms/${session.roomCode}/state`, { headers: { authorization: `Bearer ${session.token}` } });
-    const payload = await state.json();
-    assert.equal(payload.playtestMode, true);
-    assert.equal(payload.playtest.enabled, true);
-  });
-});
-
 test('state and SSE tickets require authorization, tickets are one-time', async () => {
   await withServer({ allowTestRooms: true }, async origin => {
     const session = await (await fetch(`${origin}/api/test-room`, { method: 'POST' })).json();
