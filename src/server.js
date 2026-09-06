@@ -59,8 +59,8 @@ export function createServer({ roomStore = store, allowTestRooms = process.env.E
       if (req.method === 'GET' && url.pathname === '/healthz') return json(res, 200, { status: 'ok' });
       if (req.method === 'GET' && url.pathname === '/api/config') return json(res, 200, { testRoomsEnabled: allowTestRooms });
       if (req.method === 'POST' && url.pathname === '/api/rooms') {
-        const input = await body(req); const room = createRoom(input.name); roomStore.set(room);
-        return json(res, 201, { roomCode: room.code, participantId: room.gm.participantId, role: 'GM', token: room.gm.authToken });
+        const input = await body(req); const room = createRoom(input.name, { playtestMode: Boolean(input.playtestMode) }); roomStore.set(room);
+        return json(res, 201, { roomCode: room.code, participantId: room.gm.participantId, role: 'GM', token: room.gm.authToken, playtestMode: room.playtestMode });
       }
       if (req.method === 'POST' && url.pathname === '/api/test-room') {
         if (!allowTestRooms) return json(res, 404, { error: 'Not found' });

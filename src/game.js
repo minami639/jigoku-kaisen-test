@@ -20,19 +20,21 @@ function event(room, type, payload = {}, visibility = 'public') {
   room.events.push({ id: id(), type, payload, visibility, globalTurnIndex: room.globalTurnIndex, at: now() });
 }
 
-export function createRoom(gmName = 'GM') {
+export function createRoom(gmName = 'GM', options = {}) {
   const code = crypto.randomBytes(3).toString('hex').toUpperCase();
+  const roomId = id();
   const gm = { participantId: id(), authToken: token(), role: 'GM', name: gmName.trim() || 'GM' };
+  const playtestMode = Boolean(options?.playtestMode);
   const room = {
-    id: id(), code, phase: PHASE.LOBBY, gm, players: [], stationIndex: -1, stationTurn: 0,
-    globalTurnIndex: 0, timer: null, revealedUsages: [], stationResult: null, stationResults: [], finalRanking: null, finalEnding: null, rewardNarrationStep: 0, freeTimeIntroductionStep: 0, activeStationEffectIds: [], shopStock: Object.fromEntries(SHOP_ITEMS.map(item => [item.id, item.stock])), currencyTransactions: [], purchaseTransactions: [], transferRequests: [], firstPurchaseCompleted: false, events: [], createdAt: now(), updatedAt: now()
+    id: roomId, code, phase: PHASE.LOBBY, gm, players: [], stationIndex: -1, stationTurn: 0,
+    globalTurnIndex: 0, timer: null, revealedUsages: [], stationResult: null, stationResults: [], finalRanking: null, finalEnding: null, rewardNarrationStep: 0, freeTimeIntroductionStep: 0, activeStationEffectIds: [], shopStock: Object.fromEntries(SHOP_ITEMS.map(item => [item.id, item.stock])), currencyTransactions: [], purchaseTransactions: [], transferRequests: [], firstPurchaseCompleted: false, playtestMode, playtest: playtestMode ? createPlaytestData(roomId) : null, events: [], createdAt: now(), updatedAt: now()
   };
   event(room, 'ROOM_CREATED', { gmName: gm.name });
   return room;
 }
 
 export function createTestRoom(gmName = 'テストGM') {
-  const room = createRoom(gmName);
+  const room = createRoom(gmName, { playtestMode: true });
   room.testMode = true;
   Array.from({ length: 7 }, (_, index) => joinRoom(room, `テストPL${index + 1}`));
   applyAction(room, room.gm, { type: 'OPEN_INTRODUCTION' });
@@ -57,6 +59,20 @@ export function joinRoom(room, name) {
 }
 
 const freshStats = () => ({ damageDealt: 0, damageTaken: 0, support: 0, stationScore: 0, reachedZero: false });
+
+const PLAYTEST_OBSERVATIONS = new Set([
+  'blood_heal_wanted', 'blood_healing_helps_opponents', 'blood_transfusion_cost_concern', 'blood_vampire_overused', 'blood_support_rank_concern',
+  'shop6_enma_wanted', 'shop6_chain_wanted', 'shop6_infinite_wanted', 'shop6_effect_unclear', 'shop6_late_purchase_comment', 'shop6_currency_saved',
+  'currency_prime_notice', 'currency_reverse_notice', 'currency_rail_notice', 'currency_consulted_players', 'currency_save_discussion', 'currency_heaven_line_timing'
+]);
+const PLAYTEST_LATE_SHOPS = new Set(['enma-eye', 'six-realms-chain', 'infinite-slip']);
+const PLAYTEST_LATE_SHOP_CHOICES = new Set(['WANTED', 'NO_CURRENCY', 'WEAK', 'UNCLEAR', 'OTHER_SHOP', 'UNNECESSARY']);
+const PLAYTEST_OBSERVATION_STATUSES = new Set(['UNCONFIRMED', 'YES', 'NO', 'NOTE']);
+
+function createPlaytestData(roomId = null) {
+  const startedAt = now();
+  return { version: 'v0.3', playtestId: id(), roomId, startedAt, enabledAt: startedAt, participantCount: 0, status: 'IN_PROGRESS', observations: {}, surveys: {}, finalResult: null };
+}
 
 export function authenticate(room, authToken) {
   if (room.gm.authToken === authToken) return room.gm;
@@ -83,6 +99,21 @@ function ensureRoomState(room) {
   room.finalRanking ||= null;
   room.finalEnding ||= null;
   room.stationResults ||= [];
+  room.playtestMode ??= false;
+  if (room.playtestMode) {
+    room.playtest ||= createPlaytestData(room.id);
+    room.playtest.playtestId ||= id();
+    room.playtest.roomId ||= room.id;
+    room.playtest.startedAt ||= room.playtest.enabledAt || now();
+    room.playtest.participantCount ||= room.players.length;
+    room.playtest.status ||= room.playtest.finalResult ? 'COMPLETED' : 'IN_PROGRESS';
+    room.playtest.observations ||= {};
+    room.playtest.surveys ||= {};
+    room.playtest.finalResult ||= null;
+    for (const [observationId, value] of Object.entries(room.playtest.observations)) {
+      room.playtest.observations[observationId] = normalizePlaytestObservation(value);
+    }
+  }
   for (const transaction of room.purchaseTransactions) {
     transaction.currencyCocofoliaApplied ??= Boolean(transaction.cocofoliaApplied);
   }
@@ -112,6 +143,13 @@ function ensureRoomState(room) {
 export function applyAction(room, actor, action) {
   ensureRoomState(room);
   switch (action.type) {
+    case 'SET_PLAYTEST_MODE':
+      requireGm(actor);
+      if (room.phase !== PHASE.LOBBY) throw new Error('プレイテスト記録の切替はゲーム開始前のみ行えます');
+      room.playtestMode = Boolean(action.enabled);
+      room.playtest = room.playtestMode ? (room.playtest || createPlaytestData(room.id)) : null;
+      event(room, 'PLAYTEST_MODE_CHANGED', { enabled: room.playtestMode }, 'gm');
+      break;
     case 'OPEN_INTRODUCTION':
       requireGm(actor);
       if (room.phase !== PHASE.LOBBY) throw new Error('乗車受付フェーズではありません');
@@ -304,8 +342,29 @@ export function applyAction(room, actor, action) {
       room.finalEnding = { id: action.endingId, title: endings[action.endingId], decidedAt: now() };
       room.phase = PHASE.ENDING;
       event(room, 'ENDING_CONFIRMED', { endingId: action.endingId });
+      if (room.playtestMode) finalizePlaytestResult(room);
       break;
     }
+    case 'SUBMIT_PLAYTEST_SURVEY':
+      requirePlayer(actor);
+      if (!room.playtestMode) throw new Error('このルームではプレイテスト記録が有効ではありません');
+      if (room.phase !== PHASE.ENDING) throw new Error('アンケートはゲーム終了後に回答できます');
+      submitPlaytestSurvey(room, actor, action.answers);
+      break;
+    case 'SET_PLAYTEST_OBSERVATION':
+      requireGm(actor);
+      if (!room.playtestMode) throw new Error('このルームではプレイテスト記録が有効ではありません');
+      if (!PLAYTEST_OBSERVATIONS.has(action.observationId)) throw new Error('プレイテスト観察項目が不正です');
+      setPlaytestObservation(room, action);
+      room.playtest.updatedAt = now();
+      event(room, 'PLAYTEST_OBSERVATION_UPDATED', { observationId: action.observationId, status: room.playtest.observations[action.observationId].status }, 'gm');
+      break;
+    case 'MARK_PLAYTEST_INTERRUPTED':
+      requireGm(actor);
+      if (!room.playtestMode) throw new Error('このルームではプレイテスト記録が有効ではありません');
+      if (room.phase === PHASE.ENDING) throw new Error('完走済みのプレイテストは中断にできません');
+      interruptPlaytestResult(room);
+      break;
     case 'ADVANCE_STATION_INTRODUCTION':
       requireGm(actor);
       advanceStationIntroduction(room);
@@ -430,7 +489,7 @@ export function applyAction(room, actor, action) {
     case 'TEST_PLAYER_ACTION': {
       requireGm(actor);
       if (!room.testMode) throw new Error('テストルーム専用操作です');
-      if (!['SELECT_PACK', 'CLEAR_PACK_SELECTION', 'SELECT_CARD', 'CONFIRM_CARD', 'ACK_RESULT', 'BUY_SHOP_ITEM', 'CREATE_TRANSFER_REQUEST', 'DISMISS_PURCHASE_NOTICE', 'SET_FREE_TIME_READY', 'USE_INFORMATION_SHOP'].includes(action.playerAction?.type)) throw new Error('許可されていないテスト操作です');
+      if (!['SELECT_PACK', 'CLEAR_PACK_SELECTION', 'SELECT_CARD', 'CONFIRM_CARD', 'ACK_RESULT', 'BUY_SHOP_ITEM', 'CREATE_TRANSFER_REQUEST', 'DISMISS_PURCHASE_NOTICE', 'SET_FREE_TIME_READY', 'USE_INFORMATION_SHOP', 'SUBMIT_PLAYTEST_SURVEY'].includes(action.playerAction?.type)) throw new Error('許可されていないテスト操作です');
       const player = room.players.find(item => item.participantId === action.participantId);
       if (!player) throw new Error('対象PLが見つかりません');
       applyAction(room, player, action.playerAction);
@@ -1734,7 +1793,8 @@ function purchaseShopItem(room, player, itemId, requestedPayment) {
   const transaction = {
     id: transactionId, participantId: player.participantId, playerNumber: player.playerNumber, itemId: item.id,
     ...(room.__simulationConfig ? { price: effectivePrice } : {}),
-    payment, paymentTotal, change, currencyCocofoliaApplied: false, createdAt: now()
+    payment, paymentTotal, change, stationId: currentStation(room)?.id || null, stationIndex: room.stationIndex,
+    globalTurnIndex: room.globalTurnIndex, currencyCocofoliaApplied: false, createdAt: now()
   };
   room.purchaseTransactions.push(transaction);
   if (isPrimeChange) room.firstPurchaseCompleted = true;
@@ -1883,8 +1943,23 @@ export function projectState(room, actor) {
   }));
   const rewardNarration = room.phase === PHASE.REWARD_NARRATION ? { ...stationRewardNarration(room), step: room.rewardNarrationStep } : null;
   const freeTimeIntroduction = room.phase === PHASE.FREE_TIME_INTRO ? { ...freeTimeNarration(room), step: room.freeTimeIntroductionStep } : null;
+  const playtest = room.playtestMode ? (isGm
+    ? {
+      enabled: true,
+      session: {
+        roomId: room.playtest?.roomId || room.id,
+        playtestId: room.playtest?.playtestId || null,
+        startedAt: room.playtest?.startedAt || null,
+        participantCount: room.playtest?.participantCount || room.players.length,
+        status: room.playtest?.status || 'IN_PROGRESS',
+        completedAt: room.playtest?.completedAt || null
+      },
+      observations: room.playtest?.observations || {}, finalResult: room.playtest?.finalResult || null, surveys: playtestSurveysForGm(room)
+    }
+    : { enabled: true, survey: room.playtest?.surveys?.[actor.participantId] || null })
+    : null;
   return {
-    code: room.code, testMode: Boolean(room.testMode), phase: room.phase, station: room.stationIndex >= 0 ? STATIONS[room.stationIndex] : null,
+    code: room.code, testMode: Boolean(room.testMode), playtestMode: Boolean(room.playtestMode), playtest, phase: room.phase, station: room.stationIndex >= 0 ? STATIONS[room.stationIndex] : null,
     stationTurn: room.stationTurn, globalTurnIndex: room.globalTurnIndex, timer: room.timer, introductionStep: room.introductionStep || 0, activeStationEffectIds: activeStationEffectIds(room),
     gameGuide: room.phase === PHASE.GAME_GUIDE ? { title: GAME_GUIDE.title, lines: GAME_GUIDE.lines, step: room.gameGuideStep } : null,
     stationIntroduction: stationIntroduction ? { title: stationIntroduction.title, lines: stationIntroduction.lines, step: room.stationIntroductionStep } : null,
@@ -1922,6 +1997,195 @@ function privatePlayer(player, room) {
   });
   const encoreCandidates = player.cardUsage.filter(use => use.stationIndex <= room.stationIndex - 3 && ['attack', 'defense', 'heal'].includes(CARD_BY_ID[use.cardId]?.effect?.kind)).map(use => ({ id: use.id, cardId: use.cardId, cardName: CARD_BY_ID[use.cardId]?.name, kind: CARD_BY_ID[use.cardId]?.effect?.kind }));
   return { participantId: player.participantId, role: 'PL', playerNumber: player.playerNumber, name: player.name, hp: player.hp, packId: player.packId, cards, cardMarks: player.cardMarks, ongoingEffects: player.ongoingEffects, encoreCandidates, hungerReuseUsed: player.hungerReuseUsed, currency: player.currency, shopInventory: player.shopInventory.map(entry => ({ ...entry, item: SHOP_ITEM_BY_ID[entry.itemId], cooldownStatus: shopCooldownStatus(room, entry).code, unavailableReason: shopCooldownStatus(room, entry).reason })), immediateShopUse: currentImmediateShopUse(room, player), infoShopResults: player.infoShopResults.slice(-10), purchaseTransactions: room.purchaseTransactions.filter(transaction => transaction.participantId === player.participantId).map(transaction => ({ ...transaction, itemName: SHOP_ITEM_BY_ID[transaction.itemId]?.name })), purchaseNotice: player.purchaseNotice };
+}
+
+function optionalRating(value) {
+  const rating = Number(value);
+  return Number.isInteger(rating) && rating >= 1 && rating <= 5 ? rating : null;
+}
+
+function selectedIds(values, allowed) {
+  if (!Array.isArray(values)) return [];
+  return [...new Set(values.map(value => String(value)).filter(value => allowed.has(value)))];
+}
+
+function optionalChoice(value, allowed) {
+  return allowed.has(value) ? value : null;
+}
+
+function optionalText(value, limit = 2_000) {
+  return typeof value === 'string' ? value.trim().slice(0, limit) : '';
+}
+
+function normalizePlaytestObservation(value) {
+  if (typeof value === 'boolean') return { status: value ? 'YES' : 'UNCONFIRMED', note: '', updatedAt: null };
+  const record = value && typeof value === 'object' ? value : {};
+  return {
+    status: PLAYTEST_OBSERVATION_STATUSES.has(record.status) ? record.status : 'UNCONFIRMED',
+    note: optionalText(record.note, 1_000),
+    updatedAt: typeof record.updatedAt === 'string' ? record.updatedAt : null
+  };
+}
+
+function setPlaytestObservation(room, action) {
+  const current = normalizePlaytestObservation(room.playtest.observations[action.observationId]);
+  const status = action.status ?? (action.checked ? 'YES' : 'UNCONFIRMED');
+  if (!PLAYTEST_OBSERVATION_STATUSES.has(status)) throw new Error('プレイテスト観察状態が不正です');
+  room.playtest.observations[action.observationId] = {
+    status,
+    note: action.note === undefined ? current.note : optionalText(action.note, 1_000),
+    updatedAt: now()
+  };
+  refreshPlaytestComparison(room);
+}
+
+function submitPlaytestSurvey(room, player, answers) {
+  const input = answers && typeof answers === 'object' && !Array.isArray(answers) ? answers : {};
+  const ownCardIds = new Set(CARDS.filter(card => card.packId === player.packId).map(card => card.id));
+  const ownedShopIds = new Set(player.shopInventory.map(entry => entry.itemId));
+  const allShopIds = new Set(SHOP_ITEMS.map(item => item.id));
+  const survey = {
+    submittedAt: now(),
+    packFun: optionalRating(input.packFun),
+    packStrength: optionalRating(input.packStrength),
+    difficultCardIds: selectedIds(input.difficultCardIds, ownCardIds),
+    difficultText: optionalText(input.difficultText),
+    strongCardIds: selectedIds(input.strongCardIds, ownCardIds),
+    strongText: optionalText(input.strongText),
+    worthwhileShopIds: selectedIds(input.worthwhileShopIds, ownedShopIds),
+    wantedShopIds: selectedIds(input.wantedShopIds, new Set([...allShopIds].filter(itemId => !ownedShopIds.has(itemId)))),
+    shopCount: optionalChoice(input.shopCount, new Set(['TOO_FEW', 'JUST_RIGHT', 'TOO_MANY'])),
+    primeMeaning: optionalChoice(input.primeMeaning, new Set(['YES', 'NO', 'NOTICED_DURING'])),
+    primeSpendingDilemma: optionalChoice(input.primeSpendingDilemma, new Set(['YES', 'NO'])),
+    comments: optionalText(input.comments),
+    blood: player.packId === 'blood' ? {
+      healingBenefit: optionalRating(input.blood?.healingBenefit),
+      healingHelpsOthers: optionalRating(input.blood?.healingHelpsOthers),
+      transfusionCost: optionalRating(input.blood?.transfusionCost),
+      focus: optionalChoice(input.blood?.focus, new Set(['ATTACK_ABSORB', 'HEAL_SUPPORT', 'INTERFERENCE', 'DEFENSE_REFLECTION', 'BALANCED']))
+    } : null,
+    lateShop: Object.fromEntries([...PLAYTEST_LATE_SHOPS].map(itemId => [itemId, selectedIds(input.lateShop?.[itemId], PLAYTEST_LATE_SHOP_CHOICES)]))
+  };
+  room.playtest.surveys[player.participantId] = survey;
+  room.playtest.updatedAt = survey.submittedAt;
+  refreshPlaytestComparison(room);
+  event(room, 'PLAYTEST_SURVEY_SUBMITTED', { participantId: player.participantId, playerNumber: player.playerNumber }, `private:${player.participantId}`);
+}
+
+function playtestSurveysForGm(room) {
+  return room.players.map(player => ({
+    participantId: player.participantId,
+    playerNumber: player.playerNumber,
+    name: player.name,
+    packId: player.packId,
+    answers: room.playtest?.surveys?.[player.participantId] || null
+  }));
+}
+
+function finalizePlaytestResult(room) {
+  savePlaytestResult(room, 'COMPLETED');
+  event(room, 'PLAYTEST_RESULT_SAVED', { endingId: room.finalEnding?.id || null }, 'gm');
+}
+
+function interruptPlaytestResult(room) {
+  savePlaytestResult(room, 'INTERRUPTED');
+  event(room, 'PLAYTEST_RESULT_SAVED', { endingId: null, interruptedAtPhase: room.phase }, 'gm');
+}
+
+function savePlaytestResult(room, status) {
+  const metrics = collectSimulationMetrics(room);
+  const finalRanks = new Map((room.finalRanking || []).map(entry => [entry.participantId, entry.rank]));
+  const completedAt = now();
+  const currencyTimeline = metrics.players.map(player => {
+    const purchases = room.purchaseTransactions.filter(transaction => transaction.participantId === player.participantId);
+    const discoveries = Object.fromEntries(['two', 'three', 'five', 'seven'].map(type => {
+      const transaction = purchases.find(item => Number(item.change?.coins?.[type] || 0) > 0);
+      return [type, transaction ? { at: transaction.createdAt, stationId: transaction.stationId || null, globalTurnIndex: transaction.globalTurnIndex ?? null, amount: transaction.change.coins[type] } : null];
+    }));
+    const specialCoinPayments = purchases.filter(transaction => ['two', 'three', 'five', 'seven'].some(type => Number(transaction.payment?.[type] || 0) > 0)).map(transaction => ({
+      itemId: transaction.itemId,
+      stationId: transaction.stationId || null,
+      globalTurnIndex: transaction.globalTurnIndex ?? null,
+      at: transaction.createdAt,
+      payment: transaction.payment
+    }));
+    return { participantId: player.participantId, discoveries, specialCoinPayments, finalHoldings: player.currency.finalHoldings };
+  });
+  room.playtest.finalResult = {
+    version: 'v0.3',
+    roomId: room.id,
+    playtestId: room.playtest.playtestId,
+    startedAt: room.playtest.startedAt,
+    completedAt,
+    participantCount: room.players.length,
+    status,
+    ending: room.finalEnding ? { ...room.finalEnding } : null,
+    players: metrics.players.map(player => ({
+      ...player,
+      finalRank: finalRanks.get(player.participantId) || null,
+      purchasedShopIds: room.purchaseTransactions.filter(transaction => transaction.participantId === player.participantId).map(transaction => transaction.itemId),
+      shopUseCount: player.shopUsage.length
+    })),
+    packs: metrics.packs,
+    shops: metrics.shops,
+    stationResults: metrics.stationResults,
+    currencyTimeline
+  };
+  room.playtest.participantCount = room.players.length;
+  room.playtest.status = status;
+  room.playtest.completedAt = completedAt;
+  room.playtest.updatedAt = completedAt;
+  refreshPlaytestComparison(room);
+}
+
+function average(values) {
+  const valid = values.filter(Number.isFinite);
+  return valid.length ? valid.reduce((total, value) => total + value, 0) / valid.length : null;
+}
+
+function refreshPlaytestComparison(room) {
+  if (!room.playtest?.finalResult) return;
+  const result = room.playtest.finalResult;
+  const responses = room.players.map(player => ({ player, answers: room.playtest.surveys?.[player.participantId] || null }));
+  const playersByPack = packId => result.players.filter(player => player.packId === packId);
+  const feedbackCount = (itemId, key) => responses.filter(entry => entry.answers?.[key]?.includes(itemId)).length;
+  result.comparison = {
+    schemaVersion: 'v0.3-playtest-comparison',
+    session: { roomId: room.id, playtestId: room.playtest.playtestId, startedAt: room.playtest.startedAt, completedAt: room.playtest.completedAt || null, participantCount: room.players.length, status: room.playtest.status, endingId: result.ending?.id || null },
+    packs: PACKS.map(pack => {
+      const players = playersByPack(pack.id);
+      const answered = responses.filter(entry => entry.player.packId === pack.id).map(entry => entry.answers).filter(Boolean);
+      return {
+        packId: pack.id,
+        useCount: players.length,
+        averageFinalRank: average(players.map(player => player.finalRank)),
+        averageFinalHp: average(players.map(player => player.finalHp)),
+        averageFun: average(answered.map(answer => answer.packFun)),
+        averageStrength: average(answered.map(answer => answer.packStrength))
+      };
+    }),
+    shops: result.shops.map(shop => ({
+      itemId: shop.itemId,
+      purchaseCount: shop.purchaseCount,
+      useCount: shop.useCount,
+      worthwhileVotes: feedbackCount(shop.itemId, 'worthwhileShopIds'),
+      wantedVotes: feedbackCount(shop.itemId, 'wantedShopIds')
+    })),
+    blood: responses.filter(entry => entry.player.packId === 'blood' && entry.answers?.blood).map(entry => ({
+      participantId: entry.player.participantId,
+      healingBenefit: entry.answers.blood.healingBenefit,
+      healingHelpsOthers: entry.answers.blood.healingHelpsOthers,
+      transfusionCost: entry.answers.blood.transfusionCost,
+      focus: entry.answers.blood.focus
+    })),
+    lateShops: Object.fromEntries([...PLAYTEST_LATE_SHOPS].map(itemId => [itemId, Object.fromEntries([...PLAYTEST_LATE_SHOP_CHOICES].map(choice => [choice, responses.filter(entry => entry.answers?.lateShop?.[itemId]?.includes(choice)).length]))])),
+    currency: {
+      primeMeaningResponses: Object.fromEntries(['YES', 'NO', 'NOTICED_DURING'].map(choice => [choice, responses.filter(entry => entry.answers?.primeMeaning === choice).length])),
+      observationStatuses: Object.fromEntries(Object.entries(room.playtest.observations || {}).map(([observationId, observation]) => [observationId, normalizePlaytestObservation(observation)])),
+      finalHoldings: result.currencyTimeline.map(entry => ({ participantId: entry.participantId, finalHoldings: entry.finalHoldings })),
+      endingId: result.ending?.id || null
+    }
+  };
 }
 
 // バランス検証・シミュレーション専用の集計。PL向けAPIには含めない。
