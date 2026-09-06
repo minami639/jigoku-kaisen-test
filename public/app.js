@@ -213,7 +213,8 @@ function openShopPayment(itemId, participantId) {
   const item = state.shop.items.find(entry => entry.id === itemId);
   if (!me || !item || item.soldOut || document.querySelector('.shop-payment-modal-backdrop')) return;
   const payment = Object.fromEntries(CURRENCY_TYPES.map(([type]) => [type, 0]));
-  const controls = CURRENCY_TYPES.map(([type, label, value]) => `<article><div><b>${label}</b><span>額面 ${value}／所持 ${me.currency[type] || 0}</span></div><div class="payment-stepper"><button type="button" data-payment-adjust="${type}" data-payment-delta="-1" aria-label="${label}を1枚減らす">−</button><output data-payment-count="${type}">0</output><button type="button" data-payment-adjust="${type}" data-payment-delta="1" aria-label="${label}を1枚増やす">＋</button></div></article>`).join('');
+  const availableCurrencies = CURRENCY_TYPES.filter(([type]) => (me.currency[type] || 0) > 0);
+  const controls = availableCurrencies.length ? availableCurrencies.map(([type, label, value]) => `<article><div><b>${label}</b><span>額面 ${value}／所持 ${me.currency[type] || 0}</span></div><div class="payment-stepper"><button type="button" data-payment-adjust="${type}" data-payment-delta="-1" aria-label="${label}を1枚減らす">−</button><output data-payment-count="${type}">0</output><button type="button" data-payment-adjust="${type}" data-payment-delta="1" aria-label="${label}を1枚増やす">＋</button></div></article>`).join('') : '<p class="meta">使用できる冥貨を所持していません。</p>';
   document.body.insertAdjacentHTML('beforeend', `<div class="result-modal-backdrop shop-payment-modal-backdrop"><section class="result-modal shop-payment-modal" role="dialog" aria-modal="true" aria-label="ショップ支払い"><span class="eyebrow">SHOP PAYMENT</span><h2>${esc(item.name)}</h2><p class="result-modal-subtitle">商品価格：${item.price}</p><p class="meta">支払いに使う冥貨の種類と枚数を選んでください。支払額は価格＋7までです。</p><div class="payment-coin-picker">${controls}</div><dl class="payment-summary"><div><dt>支払総額</dt><dd data-payment-total>0</dd></div><div><dt>予定おつり</dt><dd data-payment-change>なし</dd></div></dl><p class="payment-warning" data-payment-warning hidden>この支払いには路線図に使用できる特殊冥貨が含まれています。支払った冥貨は使用済みとなり、以後使用できません。</p><p class="purchase-reason" data-payment-reason>あと${item.price}不足しています</p><div class="actions payment-actions"><button type="button" class="secondary" data-dismiss-shop-payment>戻る</button><button type="button" class="primary-action" data-confirm-shop-payment disabled>この内容で購入</button></div></section></div>`);
   const modal = document.querySelector('.shop-payment-modal-backdrop');
   const update = () => {
@@ -224,7 +225,7 @@ function openShopPayment(itemId, participantId) {
     modal.querySelector('[data-payment-warning]').hidden = !specialCurrencyUsed;
     modal.querySelector('[data-payment-reason]').textContent = total < item.price ? `あと${item.price - total}不足しています` : total > item.price + 7 ? `商品価格より7までしか多く投入できません（超過 ${total - item.price - 7}）` : total === item.price ? 'ちょうどです' : `おつり：${currencyCoinsLabel(shopChangeFor(total - item.price))}`;
     modal.querySelector('[data-confirm-shop-payment]').disabled = total < item.price || total > item.price + 7;
-    CURRENCY_TYPES.forEach(([type]) => {
+    availableCurrencies.forEach(([type]) => {
       modal.querySelector(`[data-payment-count="${type}"]`).textContent = String(payment[type]);
       modal.querySelector(`[data-payment-adjust="${type}"][data-payment-delta="-1"]`).disabled = payment[type] === 0;
       modal.querySelector(`[data-payment-adjust="${type}"][data-payment-delta="1"]`).disabled = payment[type] >= (me.currency[type] || 0);
