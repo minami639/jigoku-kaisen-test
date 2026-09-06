@@ -193,6 +193,123 @@ test('information SHOP is immediate, private, consumes the shop slot, and has th
   assert.doesNotThrow(() => applyAction(room, owner, { type: 'USE_INFORMATION_SHOP', shopEntryId: eye.inventoryId, targetId: room.players[1].participantId }));
 });
 
+test('護りの数珠は他PLだけの直接ダメージをSHOP成果として軽減し、針除けの護符とは役割が異なる', () => {
+  const room = roomAt(0, 1);
+  const owner = room.players[0];
+  const protectedPlayer = room.players[2];
+  const unprotectedPlayer = room.players[4];
+  const rosary = grantShop(owner, 'protective-rosary', 'rosary');
+  room.players[1].packId = 'scorch';
+  room.players[3].packId = 'scorch';
+
+  assert.throws(() => applyAction(room, owner, {
+    type: 'SELECT_CARD', cardId: 'flame-wall', targetId: room.players[1].participantId,
+    shopEntryId: rosary.inventoryId, shopTargetId: owner.participantId
+  }), /守るプレイヤーを自分以外/);
+
+  resolve(room, {
+    0: { cardId: 'flame-wall', targetId: room.players[1].participantId, shopEntryId: rosary.inventoryId, shopTargetId: protectedPlayer.participantId },
+    1: { cardId: 'flame-strike', targetId: protectedPlayer.participantId },
+    3: { cardId: 'flame-strike', targetId: unprotectedPlayer.participantId }
+  });
+
+  const protectedDamage = room.events.find(event => event.type === 'DIRECT_DAMAGE' && event.payload.sourceId === room.players[1].participantId && event.payload.targetId === protectedPlayer.participantId);
+  const unprotectedDamage = room.events.find(event => event.type === 'DIRECT_DAMAGE' && event.payload.sourceId === room.players[3].participantId && event.payload.targetId === unprotectedPlayer.participantId);
+  assert.equal(protectedDamage.payload.amount, 2, '指定した他PLだけが数珠で1軽減される');
+  assert.equal(unprotectedDamage.payload.amount, 3, '指定外PLの直接ダメージは軽減しない');
+  assert.equal(owner.stationStats.support, 0, 'SHOP単体の軽減を七獄カード由来の支援点へ混ぜない');
+  assert.ok(room.events.some(event => event.type === 'SHOP_EFFECT_APPLIED' && event.payload.itemId === 'protective-rosary' && event.payload.prevented === 1));
+  assert.equal(room.revealedUsages.find(use => use.participantId === owner.participantId).shopTargetId, protectedPlayer.participantId, '数珠の支援先だけは一斉公開する');
+
+  applyAction(room, room.gm, { type: 'TEST_JUMP_PHASE', phase: 'TURN_SELECTION', stationIndex: 0, stationTurn: 2 });
+  room.players.forEach(player => { player.cardUsage = []; });
+  assert.throws(() => applyAction(room, owner, { type: 'SELECT_CARD', cardId: 'flame-wall', targetId: room.players[1].participantId, shopEntryId: rosary.inventoryId, shopTargetId: protectedPlayer.participantId }), /SHOPカード.*前のターン/);
+
+  const needleRoom = roomAt(0, 1);
+  const needleOwner = needleRoom.players[0];
+  const needle = grantShop(needleOwner, 'needle-ward', 'needle-ward');
+  assert.doesNotThrow(() => applyAction(needleRoom, needleOwner, {
+    type: 'SELECT_CARD', cardId: 'flame-wall', targetId: needleRoom.players[1].participantId, shopEntryId: needle.inventoryId
+  }), '針除けの護符は対象指定なしで自分だけを守る');
+});
+
+test('地獄の鎖は攻撃の最初の対象変更だけを防ぎ、六道の鎖は分類を問わず全対象変更を防ぐ', () => {
+  const hellRoom = roomAt(4, 1);
+  const owner = hellRoom.players[0];
+  const hellChain = grantShop(owner, 'hell-chain', 'hell-chain');
+  hellRoom.players[2].packId = 'ice';
+  assert.throws(() => applyAction(hellRoom, owner, {
+    type: 'SELECT_CARD', cardId: 'flame-wall', targetId: hellRoom.players[1].participantId, shopEntryId: hellChain.inventoryId
+  }), /地獄の鎖】は攻撃カード/);
+  resolve(hellRoom, {
+    0: { cardId: 'flame-strike', targetId: hellRoom.players[1].participantId, shopEntryId: hellChain.inventoryId },
+    1: { cardId: 'blizzard', targetId: owner.participantId },
+    2: { cardId: 'blizzard', targetId: owner.participantId }
+  });
+  const prevented = hellRoom.events.filter(event => event.type === 'SHOP_EFFECT_APPLIED' && event.payload.itemId === 'hell-chain' && event.payload.effect === 'TARGET_CHANGE_PREVENTED_ONCE_ATTACK');
+  const changed = hellRoom.events.filter(event => event.type === 'TARGET_CHANGED_RANDOM' && event.payload.targetCardOwnerId === owner.participantId);
+  assert.equal(prevented.length, 1, '最初の対象変更だけを無効化する');
+  assert.equal(changed.length, 1, '2回目の対象変更は通常どおり通る');
+
+  const sixRoom = roomAt(6, 1);
+  const sixOwner = sixRoom.players[0];
+  const sixChain = grantShop(sixOwner, 'six-realms-chain', 'six-chain');
+  sixRoom.players[2].packId = 'ice';
+  resolve(sixRoom, {
+    0: { cardId: 'flame-wall', targetId: sixRoom.players[1].participantId, shopEntryId: sixChain.inventoryId },
+    1: { cardId: 'blizzard', targetId: sixOwner.participantId },
+    2: { cardId: 'blizzard', targetId: sixOwner.participantId },
+    6: { cardId: 'nullify', targetId: sixOwner.participantId }
+  });
+  assert.equal(sixRoom.events.filter(event => event.type === 'SHOP_EFFECT_APPLIED' && event.payload.itemId === 'six-realms-chain' && event.payload.effect === 'TARGET_CHANGE_PREVENTED').length, 2, '六道の鎖は防御カードにも複数回の対象変更にも有効');
+  assert.equal(sixRoom.events.filter(event => event.type === 'TARGET_CHANGED_RANDOM' && event.payload.targetCardOwnerId === sixOwner.participantId).length, 0);
+
+  const nullifyRoom = roomAt(6, 1);
+  const nullifyOwner = nullifyRoom.players[0];
+  const nullifySixChain = grantShop(nullifyOwner, 'six-realms-chain', 'six-chain-nullify');
+  resolve(nullifyRoom, {
+    0: { cardId: 'flame-strike', targetId: nullifyRoom.players[1].participantId, shopEntryId: nullifySixChain.inventoryId },
+    6: { cardId: 'nullify', targetId: nullifyOwner.participantId }
+  });
+  assert.equal(nullifyRoom.revealedUsages.find(use => use.participantId === nullifyOwner.participantId).invalidated, true, '六道の鎖は無効を防がない');
+});
+
+test('血占いの針は攻撃か否かと自分への危険だけを、使用時点の秘密情報として返す', () => {
+  const room = roomAt(2, 1);
+  const owner = room.players[0];
+  const needle = grantShop(owner, 'blood-divination-needle', 'blood-divination');
+  const target = room.players[1];
+  const outsider = room.players[2];
+
+  applyAction(room, target, selectionFor(room, target, 1, 'freeze', owner.participantId));
+  applyAction(room, owner, { type: 'USE_INFORMATION_SHOP', shopEntryId: needle.inventoryId, targetId: target.participantId });
+  const firstResult = projectState(room, owner).me.infoShopResults.at(-1).result;
+  assert.match(firstResult, /攻撃以外/);
+  assert.doesNotMatch(firstResult, /対象/);
+  assert.equal(projectState(room, outsider).me.infoShopResults.length, 0, '権限外PLへ情報を送らない');
+  assert.ok(!projectState(room, outsider).events.some(event => event.type === 'SHOP_INFORMATION_REVEALED'), '権限外PLのイベント一覧にも情報結果を含めない');
+
+  const attackSelfRoom = roomAt(2, 1);
+  const attackSelfOwner = attackSelfRoom.players[0];
+  const attackSelfNeedle = grantShop(attackSelfOwner, 'blood-divination-needle', 'blood-divination-self');
+  applyAction(attackSelfRoom, attackSelfRoom.players[1], selectionFor(attackSelfRoom, attackSelfRoom.players[1], 1, 'ice-spear', attackSelfOwner.participantId));
+  applyAction(attackSelfRoom, attackSelfOwner, { type: 'USE_INFORMATION_SHOP', shopEntryId: attackSelfNeedle.inventoryId, targetId: attackSelfRoom.players[1].participantId });
+  assert.match(projectState(attackSelfRoom, attackSelfOwner).me.infoShopResults.at(-1).result, /攻撃.*あなたです/);
+
+  const attackOtherRoom = roomAt(2, 1);
+  const attackOtherOwner = attackOtherRoom.players[0];
+  const attackOtherNeedle = grantShop(attackOtherOwner, 'blood-divination-needle', 'blood-divination-other');
+  const observed = attackOtherRoom.players[1];
+  const hiddenTarget = attackOtherRoom.players[3];
+  applyAction(attackOtherRoom, observed, selectionFor(attackOtherRoom, observed, 1, 'ice-spear', hiddenTarget.participantId));
+  applyAction(attackOtherRoom, attackOtherOwner, { type: 'USE_INFORMATION_SHOP', shopEntryId: attackOtherNeedle.inventoryId, targetId: observed.participantId });
+  const snapshot = projectState(attackOtherRoom, attackOtherOwner).me.infoShopResults.at(-1).result;
+  assert.match(snapshot, /攻撃.*あなたではありません/);
+  assert.doesNotMatch(snapshot, new RegExp(`PL${hiddenTarget.playerNumber}`), '具体的な対象PL名を返さない');
+  applyAction(attackOtherRoom, observed, selectionFor(attackOtherRoom, observed, 1, 'ice-spear', attackOtherOwner.participantId));
+  assert.equal(projectState(attackOtherRoom, attackOtherOwner).me.infoShopResults.at(-1).result, snapshot, '使用後に仮対象が変わっても結果を自動更新しない');
+});
+
 test('怨返しの札 secretly fixes its target and reacts once only to that PL’s direct actual damage', () => {
   const room = roomAt(0, 1);
   const owner = room.players[0];
@@ -271,7 +388,7 @@ test('25 turns execute every SHOP card, including reusable and information SHOP 
     [11, new Map([[0, 'red-bandage']])]
   ]);
   const preferredCard = new Map([
-    ['will-o-wisp-amulet', 'flame-strike'], ['shared-life-cup', 'healing-blood'], ['accomplice-thread', 'flame-strike'], ['scapegoat-slip', 'immolation'], ['hell-key', 'immolation'], ['grudge-slip', 'flame-wall'], ['red-bandage', 'flame-strike']
+    ['will-o-wisp-amulet', 'flame-strike'], ['shared-life-cup', 'healing-blood'], ['accomplice-thread', 'flame-strike'], ['scapegoat-slip', 'immolation'], ['hell-key', 'immolation'], ['grudge-slip', 'flame-wall'], ['red-bandage', 'flame-strike'], ['hell-chain', 'flame-strike']
   ]);
   let processed = 0;
   while (processed < 25) {
@@ -302,7 +419,7 @@ test('25 turns execute every SHOP card, including reusable and information SHOP 
       const selection = selectionFor(room, player, index, card.id);
       if (item && item.timing !== 'info') {
         selection.shopEntryId = entries.get(itemId).inventoryId;
-        if (item.effectType === 'GRUDGE') selection.shopTargetId = room.players[1].participantId;
+        if (item.effectType === 'GRUDGE' || item.effectType === 'ALLY_DIRECT_REDUCTION') selection.shopTargetId = room.players[1].participantId;
         if (item.effectType === 'SECRET_TARGET_NOTICE') selection.shopTargetId = room.players[1].participantId;
         if (item.effectType === 'GREEDY_TICKET') selection.shopCardTargetId = view.cards.find(candidate => candidate.category !== 'attack' && candidate.id !== card.id && !candidate.cooldownStatus)?.id;
         if (item.effectType === 'NORMAL_CT_BYPASS') {

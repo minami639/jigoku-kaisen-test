@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node src/server.js",
     "test": "node --test",
-    "check": "node --check src/server.js && node --check src/game.js && node --check public/app.js"
+    "check": "node --check src/server.js && node --check src/game.js && node --check public/app.js && node --check scripts/simulate-balance.js",
+    "simulate:balance": "node scripts/simulate-balance.js"
   },
   "engines": {
     "node": ">=22"

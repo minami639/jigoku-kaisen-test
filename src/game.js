@@ -9,6 +9,13 @@ const id = () => crypto.randomUUID();
 const now = () => new Date().toISOString();
 const INTRODUCTION_STEP_COUNT = 39;
 
+// 通常ゲームは暗号学的乱数を使う。バランスシミュレーションだけは room.randomInt を
+// 注入して、対象変更・無間地獄の抽選・テスト用パックシャッフルを再現可能にする。
+function randomInt(room, maxExclusive) {
+  if (typeof room?.randomInt === 'function') return room.randomInt(maxExclusive);
+  return crypto.randomInt(maxExclusive);
+}
+
 function event(room, type, payload = {}, visibility = 'public') {
   room.events.push({ id: id(), type, payload, visibility, globalTurnIndex: room.globalTurnIndex, at: now() });
 }
@@ -405,7 +412,7 @@ export function applyAction(room, actor, action) {
       if (room.phase !== PHASE.PACK_SELECTION) throw new Error('パック選択フェーズではありません');
       const packs = PACKS.map(pack => pack.id);
       for (let index = packs.length - 1; index > 0; index -= 1) {
-        const swapIndex = crypto.randomInt(index + 1);
+        const swapIndex = randomInt(room, index + 1);
         [packs[index], packs[swapIndex]] = [packs[swapIndex], packs[index]];
       }
       room.players.forEach((player, index) => {
@@ -485,9 +492,9 @@ function startSelfIntroduction(room) {
 function chooseInfiniteEffects(room) {
   if (room.activeStationEffectIds?.length === 2) return;
   const candidates = ['scorch', 'ice', 'needle', 'blood', 'hunger', 'war'];
-  const first = crypto.randomInt(candidates.length);
+  const first = randomInt(room, candidates.length);
   const [one] = candidates.splice(first, 1);
-  const two = candidates[crypto.randomInt(candidates.length)];
+  const two = candidates[randomInt(room, candidates.length)];
   room.activeStationEffectIds = [one, two];
   event(room, 'INFINITE_EFFECTS_SELECTED', { effectIds: room.activeStationEffectIds }, 'public');
 }
@@ -638,7 +645,11 @@ function useInformationShop(room, actor, action) {
   let result;
   if (!targetCard) result = '仮選択はまだありません。';
   else if (item.effectType === 'INFO_CATEGORY') result = `PL${target.playerNumber}の仮選択カードの主分類は「${targetCard.category === 'attack' ? '攻撃' : ({ defense: '防御', support: '補助', heal: '回復', interference: '妨害' }[targetCard.category] || 'それ以外')}」です。`;
-  else if (item.effectType === 'INFO_ATTACK_OR_OTHER') result = `PL${target.playerNumber}の仮選択カードは「${targetCard.category === 'attack' ? '攻撃' : 'それ以外'}」です。`;
+  else if (item.effectType === 'INFO_ATTACK_OR_OTHER') {
+    result = targetCard.category === 'attack'
+      ? `PL${target.playerNumber}の仮選択カードは「攻撃」です。現在の対象は${target.selection?.targetId === actor.participantId ? 'あなたです。' : 'あなたではありません。'}`
+      : `PL${target.playerNumber}の仮選択カードは「攻撃以外」です。`;
+  }
   else result = `PL${target.playerNumber}の仮選択カードは【${targetCard.name}】です。`;
   const shopUse = startShopUse(room, actor, entry, item, { timing: 'INFO', visibility: `private:${actor.participantId}`, targetId: target.participantId });
   actor.immediateShopUse = { entryId: entry.inventoryId, itemId: item.id, globalTurnIndex: room.globalTurnIndex, targetId: target.participantId };
@@ -704,11 +715,19 @@ function validateSelection(room, actor, selection) {
   if (!shop) return;
   validateShopEntryForUse(room, actor, shop.entry, shop.item);
   if (currentImmediateShopUse(room, actor)) throw new Error('このターンはすでに情報系SHOPカードを使用しています。');
-  if (shop.item.effectType === 'GRUDGE' || shop.item.effectType === 'SECRET_TARGET_NOTICE') {
+  if (shop.item.effectType === 'GRUDGE' || shop.item.effectType === 'SECRET_TARGET_NOTICE' || shop.item.effectType === 'ALLY_DIRECT_REDUCTION') {
     const target = playerById(room, selection.shopTargetId);
-    if (!target || target === actor) throw new Error(shop.item.effectType === 'GRUDGE' ? '怨返しする相手を自分以外から1人選んでください。' : '通知先を自分以外から1人選んでください。');
+    if (!target || target === actor) {
+      const message = shop.item.effectType === 'GRUDGE'
+        ? '怨返しする相手を自分以外から1人選んでください。'
+        : shop.item.effectType === 'ALLY_DIRECT_REDUCTION'
+          ? '守るプレイヤーを自分以外から1人選んでください。'
+          : '通知先を自分以外から1人選んでください。';
+      throw new Error(message);
+    }
   }
   if (shop.item.effectType === 'SECRET_TARGET_NOTICE' && card.category !== 'attack') throw new Error('【共犯の糸】は攻撃カードと組み合わせて使用してください。');
+  if (shop.item.effectType === 'PREVENT_TARGET_CHANGE_ONCE_ATTACK' && card.category !== 'attack') throw new Error('【地獄の鎖】は攻撃カードと一緒に使用してください。');
   if (shop.item.effectType === 'GREEDY_TICKET') {
     const targetCard = CARD_BY_ID[selection.shopCardTargetId];
     const mark = targetCard && actor.cardMarks[targetCard.id] || {};
@@ -806,7 +825,17 @@ function resolveTurnLegacy(room) {
   event(room, 'TURN_RESOLVED', { stationTurn: room.stationTurn, globalTurnIndex: room.globalTurnIndex });
 }
 
-function publicUsage(use) { return { participantId: use.player.participantId, playerNumber: use.player.playerNumber, cardId: use.card.id, targetId: use.targetId, shopItemId: use.shopItem?.id || null }; }
+function publicUsage(use) {
+  return {
+    participantId: use.player.participantId,
+    playerNumber: use.player.playerNumber,
+    cardId: use.card.id,
+    targetId: use.targetId,
+    shopItemId: use.shopItem?.id || null,
+    // 護りの数珠の支援先だけは一斉公開時に公開する。怨返し等の秘密対象は含めない。
+    shopTargetId: use.shopItem?.effectType === 'ALLY_DIRECT_REDUCTION' ? use.shopTargetId || null : null
+  };
+}
 function recordDamage(source, target, amount) { source.stationStats.damageDealt += amount; source.totalStats.damageDealt += amount; source.stationStats.stationScore += amount; target.stationStats.damageTaken += amount; target.totalStats.damageTaken += amount; }
 function applyStationDamage(room, attacks) {
   if (STATIONS[room.stationIndex]?.id !== 'needle') return;
@@ -924,6 +953,12 @@ function engineTargetChanges(room, usages) {
       event(room, 'SHOP_EFFECT_APPLIED', { participantId: targetUse.player.participantId, itemId: targetUse.shopItem.id, effect: 'TARGET_CHANGE_PREVENTED', sourceId: use.player.participantId });
       continue;
     }
+    if (targetUse.shopItem?.effectType === 'PREVENT_TARGET_CHANGE_ONCE_ATTACK' && targetUse.card.category === 'attack' && !targetUse.shopTargetChangePrevented) {
+      targetUse.shopTargetChangePrevented = true;
+      use.outcome = 'FIZZLED';
+      event(room, 'SHOP_EFFECT_APPLIED', { participantId: targetUse.player.participantId, itemId: targetUse.shopItem.id, effect: 'TARGET_CHANGE_PREVENTED_ONCE_ATTACK', sourceId: use.player.participantId });
+      continue;
+    }
     if (targetUse.shopItem?.effectType === 'PREVENT_TARGET_CHANGE_ONCE' && !targetUse.shopTargetChangePrevented) {
       targetUse.shopTargetChangePrevented = true;
       use.outcome = 'FIZZLED';
@@ -933,7 +968,7 @@ function engineTargetChanges(room, usages) {
     const candidates = room.players.filter(player => player.participantId !== targetUse.player.participantId && player.participantId !== targetUse.targetId);
     if (!candidates.length) { use.outcome = 'FIZZLED'; event(room, 'TARGET_CHANGE_FIZZLED', { sourceId: use.player.participantId, targetId: targetUse.player.participantId }); continue; }
     const fromTargetId = targetUse.targetId;
-    const target = candidates[crypto.randomInt(candidates.length)];
+    const target = candidates[randomInt(room, candidates.length)];
     targetUse.targetId = target.participantId;
     event(room, 'TARGET_CHANGED_RANDOM', { sourceId: use.player.participantId, targetCardOwnerId: targetUse.player.participantId, fromTargetId, toTargetId: target.participantId, candidates: candidates.map(player => player.participantId) });
   }
@@ -1010,10 +1045,19 @@ function engineReserveDefenses(room, usages, modifiers, focusCounts) {
       if (kind === 'reversal') engineAddDefense(defenses, use.targetId, { use, kind: 'reversal', remaining: 1, contributions: [] });
     }
     if (use.shopItem?.effectType === 'DIRECT_REDUCTION') {
-      engineAddDefense(defenses, use.player.participantId, { use, shopItemId: use.shopItem.id, kind: 'numeric', remaining: 1, contributions: [{ source: use.player, amount: 1, reason: 'SHOP_DIRECT_REDUCTION' }] });
+      engineAddDefense(defenses, use.player.participantId, { use, shopItemId: use.shopItem.id, kind: 'numeric', remaining: 1, contributions: [{ source: use.player, amount: 1, reason: 'SHOP_DIRECT_REDUCTION', isShop: true }] });
+    }
+    if (use.shopItem?.effectType === 'ALLY_DIRECT_REDUCTION') {
+      const protectedPlayer = playerById(room, use.shopTargetId);
+      if (protectedPlayer && protectedPlayer !== use.player) {
+        engineAddDefense(defenses, protectedPlayer.participantId, { use, shopItemId: use.shopItem.id, kind: 'numeric', remaining: 1, contributions: [{ source: use.player, amount: 1, reason: 'SHOP_ALLY_DIRECT_REDUCTION', isShop: true }] });
+      } else {
+        use.shopEffectFailed = true;
+        event(room, 'SHOP_EFFECT_FAILED', { participantId: use.player.participantId, itemId: use.shopItem.id, reason: 'PROTECTED_PLAYER_REQUIRED' });
+      }
     }
     if (use.shopItem?.effectType === 'FIRST_DIRECT_REDUCTION') {
-      engineAddDefense(defenses, use.player.participantId, { use, shopItemId: use.shopItem.id, kind: 'firstDirect', remaining: 2, contributions: [{ source: use.player, amount: 2, reason: 'SHOP_FIRST_DIRECT_REDUCTION' }] });
+      engineAddDefense(defenses, use.player.participantId, { use, shopItemId: use.shopItem.id, kind: 'firstDirect', remaining: 2, contributions: [{ source: use.player, amount: 2, reason: 'SHOP_FIRST_DIRECT_REDUCTION', isShop: true }] });
     }
   }
   for (const entries of defenses.values()) entries.sort((a, b) => a.use.player.playerNumber - b.use.player.playerNumber);
@@ -1108,7 +1152,7 @@ function engineSpendDefense(room, defense, amount, target, attack) {
     remaining -= applied;
     attack.defenseSources ||= [];
     const cardId = defense.shopItemId || defense.use.card.id;
-    attack.defenseSources.push({ source: contribution.source, amount: applied, cardId, reason: contribution.reason || 'DEFENSE' });
+    attack.defenseSources.push({ source: contribution.source, amount: applied, cardId, reason: contribution.reason || 'DEFENSE', isShop: Boolean(contribution.isShop) });
     event(room, 'DEFENSE_ALLOCATED', { sourceId: contribution.source.participantId, targetId: target.participantId, cardId, amount: applied, reason: contribution.reason || 'DEFENSE' });
     if (!remaining) break;
   }
@@ -1173,8 +1217,10 @@ function engineResolveAttackEvents(room, attacks, defenses) {
     for (const defenseSource of attack.defenseSources || []) {
       const credited = Math.min(actualPrevention, defenseSource.amount);
       actualPrevention -= credited;
-      if (credited && defenseSource.source !== target) engineSupport(room, defenseSource.source, credited, { targetId: target.participantId, cardId: defenseSource.cardId, reason: defenseSource.reason });
+      // SHOP単体による軽減は七獄カードの支援点・駅スコアへ混ぜず、SHOP成果として個別に記録する。
+      if (credited && defenseSource.source !== target && !defenseSource.isShop) engineSupport(room, defenseSource.source, credited, { targetId: target.participantId, cardId: defenseSource.cardId, reason: defenseSource.reason });
       if (credited) event(room, 'DEFENSE_APPLIED', { sourceId: defenseSource.source.participantId, targetId: target.participantId, cardId: defenseSource.cardId, amount: credited, reason: defenseSource.reason });
+      if (credited && defenseSource.isShop) event(room, 'SHOP_EFFECT_APPLIED', { participantId: defenseSource.source.participantId, itemId: defenseSource.cardId, effect: defenseSource.reason, targetId: target.participantId, prevented: credited });
     }
     attack.use.basicActual = (attack.use.basicActual || 0) + attack.actual;
   }

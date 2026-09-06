@@ -323,12 +323,48 @@ test('unlocked shop products remain available in later free time while locked sh
   applyAction(room, room.gm, { type: 'TEST_JUMP_PHASE', phase: 'FREE_TIME', stationIndex: 1, stationTurn: 0 });
   room.players[0].currency.one = 3;
   const view = projectState(room, room.players[0]);
-  assert.equal(view.shop.items.length, 10);
-  assert.equal(view.shop.items.filter(item => item.isNew).length, 7);
+  assert.equal(view.shop.items.length, 7);
+  assert.equal(view.shop.items.filter(item => item.isNew).length, 4);
   assert.ok(view.shop.items.some(item => item.id === 'will-o-wisp-amulet' && item.isNew === false));
   applyAction(room, room.players[0], { type: 'BUY_SHOP_ITEM', itemId: 'will-o-wisp-amulet', payment: payment({ one: 3 }) });
   assert.equal(room.players[0].shopInventory[0].itemId, 'will-o-wisp-amulet');
   assert.throws(() => applyAction(room, room.players[1], { type: 'BUY_SHOP_ITEM', itemId: 'bloodstop-charm', payment: payment({ five: 1 }) }), /まだ解禁/);
+});
+
+test('SHOP解禁は3/4/4/4/4/3で、移動した3商品は指定駅まで販売されない', () => {
+  const expectedNewItems = [
+    ['scorch', 3, ['will-o-wisp-amulet', 'protective-rosary', 'red-bandage']],
+    ['ice', 4, ['needle-ward', 'decoy-doll', 'demon-eye', 'accomplice-thread']],
+    ['needle', 4, ['bloodstop-charm', 'shared-life-cup', 'blood-divination-needle', 'grudge-slip']],
+    ['blood', 4, ['leftover-bag', 'hunger-lock', 'greedy-ticket', 'hell-key']],
+    ['hunger', 4, ['war-mask', 'hell-chain', 'battle-medicine', 'scapegoat-slip']],
+    ['war', 3, ['enma-eye', 'six-realms-chain', 'infinite-slip']]
+  ];
+  for (let stationIndex = 0; stationIndex < expectedNewItems.length; stationIndex += 1) {
+    const room = createTestRoom();
+    applyAction(room, room.gm, { type: 'TEST_JUMP_PHASE', phase: 'FREE_TIME', stationIndex, stationTurn: 0 });
+    const [, count, ids] = expectedNewItems[stationIndex];
+    const view = projectState(room, room.players[0]);
+    assert.equal(view.shop.items.filter(item => item.isNew).length, count);
+    assert.deepEqual(view.shop.items.filter(item => item.isNew).map(item => item.id), ids);
+  }
+
+  const second = createTestRoom();
+  applyAction(second, second.gm, { type: 'TEST_JUMP_PHASE', phase: 'FREE_TIME', stationIndex: 1, stationTurn: 0 });
+  second.players[0].currency.two = 1;
+  assert.throws(() => applyAction(second, second.players[0], { type: 'BUY_SHOP_ITEM', itemId: 'grudge-slip', payment: payment({ two: 1 }) }), /まだ解禁/);
+  const third = createTestRoom();
+  applyAction(third, third.gm, { type: 'TEST_JUMP_PHASE', phase: 'FREE_TIME', stationIndex: 2, stationTurn: 0 });
+  third.players[0].currency.two = 1;
+  assert.doesNotThrow(() => applyAction(third, third.players[0], { type: 'BUY_SHOP_ITEM', itemId: 'grudge-slip', payment: payment({ two: 1 }) }));
+  const fourth = createTestRoom();
+  applyAction(fourth, fourth.gm, { type: 'TEST_JUMP_PHASE', phase: 'FREE_TIME', stationIndex: 3, stationTurn: 0 });
+  fourth.players[0].currency.three = 1;
+  assert.doesNotThrow(() => applyAction(fourth, fourth.players[0], { type: 'BUY_SHOP_ITEM', itemId: 'hell-key', payment: payment({ three: 1 }) }));
+  const fifth = createTestRoom();
+  applyAction(fifth, fifth.gm, { type: 'TEST_JUMP_PHASE', phase: 'FREE_TIME', stationIndex: 4, stationTurn: 0 });
+  fifth.players[0].currency.three = 1;
+  assert.doesNotThrow(() => applyAction(fifth, fifth.players[0], { type: 'BUY_SHOP_ITEM', itemId: 'scapegoat-slip', payment: payment({ three: 1 }) }));
 });
 
 test('first-shop purchases accept chosen coin types and return canonical change atomically', () => {
@@ -545,7 +581,7 @@ test('every shop settles chosen payment coins and returns value-based change', (
 
   const secondRoom = createTestRoom();
   secondRoom.players[0].currency.three = 1;
-  applyAction(secondRoom, secondRoom.gm, { type: 'TEST_JUMP_PHASE', phase: 'FREE_TIME', stationIndex: 1, stationTurn: 0 });
+  applyAction(secondRoom, secondRoom.gm, { type: 'TEST_JUMP_PHASE', phase: 'FREE_TIME', stationIndex: 3, stationTurn: 0 });
   applyAction(secondRoom, secondRoom.players[0], { type: 'BUY_SHOP_ITEM', itemId: 'hell-key', payment: payment({ three: 1 }) });
   assert.equal(secondRoom.players[0].currency.three, 0);
   assert.equal(secondRoom.purchaseTransactions[0].change.total, 0);
