@@ -71,9 +71,7 @@ test('introduction is followed by an eight-minute self-introduction phase', () =
   assert.equal(room.phase, 'INTRODUCTION');
   assert.equal(room.introductionStep, 1);
   assert.throws(() => applyAction(room, room.players[0], { type: 'ADVANCE_INTRODUCTION' }), /GM専用/);
-  while (room.introductionStep < 39) applyAction(room, room.gm, { type: 'ADVANCE_INTRODUCTION' });
-  assert.equal(room.phase, 'INTRODUCTION');
-  applyAction(room, room.gm, { type: 'ADVANCE_INTRODUCTION' });
+  while (room.phase === 'INTRODUCTION') applyAction(room, room.gm, { type: 'ADVANCE_INTRODUCTION' });
   assert.equal(room.phase, 'SELF_INTRODUCTION');
   assert.equal(room.timer.endsAt - room.timer.startedAt, 480_000);
   assert.throws(() => applyAction(room, room.gm, { type: 'OPEN_PACK_SELECTION' }), /PL7人全員/);
@@ -94,6 +92,7 @@ test('game guide is shown after self-introduction and every player starts with n
   assert.equal(room.phase, 'GAME_GUIDE');
   const playerView = projectState(room, room.players[0]);
   assert.match(playerView.gameGuide.lines.join('\n'), /ココフォリア/);
+  assert.ok(playerView.gameGuide.lines.every(block => Array.isArray(block) && block.length >= 1 && block.length <= 2));
   assert.throws(() => applyAction(room, room.players[0], { type: 'ADVANCE_GAME_GUIDE' }), /GM専用/);
   while (room.gameGuideStep < playerView.gameGuide.lines.length) applyAction(room, room.gm, { type: 'ADVANCE_GAME_GUIDE' });
   applyAction(room, room.gm, { type: 'ADVANCE_GAME_GUIDE' });

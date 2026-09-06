@@ -7,7 +7,12 @@ export const PHASE = Object.freeze({ LOBBY: 'LOBBY', INTRODUCTION: 'INTRODUCTION
 const token = () => crypto.randomBytes(24).toString('base64url');
 const id = () => crypto.randomUUID();
 const now = () => new Date().toISOString();
-const INTRODUCTION_STEP_COUNT = 39;
+// 読み上げは一度に最大2行ずつ表示する。文章そのものは定義側では1行ずつ
+// 保持し、進行用のステップにだけここでまとめる。
+const NARRATIVE_LINES_PER_STEP = 2;
+const narrativeBlocks = lines => Array.from({ length: Math.ceil(lines.length / NARRATIVE_LINES_PER_STEP) }, (_, index) => lines.slice(index * NARRATIVE_LINES_PER_STEP, (index + 1) * NARRATIVE_LINES_PER_STEP));
+const narrativeStepCount = lines => narrativeBlocks(lines).length;
+const INTRODUCTION_STEP_COUNT = Math.ceil(39 / NARRATIVE_LINES_PER_STEP);
 
 // 通常ゲームは暗号学的乱数を使う。バランスシミュレーションだけは room.randomInt を
 // 注入して、対象変更・無間地獄の抽選・テスト用パックシャッフルを再現可能にする。
@@ -209,7 +214,7 @@ export function applyAction(room, actor, action) {
     case 'ADVANCE_GAME_GUIDE':
       requireGm(actor);
       if (room.phase !== PHASE.GAME_GUIDE) throw new Error('ゲーム説明フェーズではありません');
-      if (room.gameGuideStep < GAME_GUIDE.lines.length) {
+      if (room.gameGuideStep < narrativeStepCount(GAME_GUIDE.lines)) {
         room.gameGuideStep += 1;
         event(room, 'GAME_GUIDE_ADVANCED', { step: room.gameGuideStep }, 'gm');
       } else {
@@ -1658,7 +1663,7 @@ function freeTimeNarration(room) {
 function advanceRewardNarration(room) {
   if (room.phase !== PHASE.REWARD_NARRATION) throw new Error('報酬発表中ではありません');
   const narration = stationRewardNarration(room);
-  if (room.rewardNarrationStep < narration.lines.length) {
+  if (room.rewardNarrationStep < narrativeStepCount(narration.lines)) {
     room.rewardNarrationStep += 1;
     event(room, 'STATION_REWARD_NARRATION_ADVANCED', { stationId: STATIONS[room.stationIndex].id, step: room.rewardNarrationStep }, 'gm');
     return;
@@ -1724,7 +1729,7 @@ function startFreeTimeIntroduction(room) {
 function advanceFreeTimeIntroduction(room) {
   if (room.phase !== PHASE.FREE_TIME_INTRO) throw new Error('自由時間の案内中ではありません');
   const narration = freeTimeNarration(room);
-  if (room.freeTimeIntroductionStep < narration.lines.length) {
+  if (room.freeTimeIntroductionStep < narrativeStepCount(narration.lines)) {
     room.freeTimeIntroductionStep += 1;
     event(room, 'FREE_TIME_INTRODUCTION_ADVANCED', { stationId: STATIONS[room.stationIndex].id, step: room.freeTimeIntroductionStep }, 'gm');
     return;
@@ -1873,7 +1878,7 @@ function advanceStationIntroduction(room) {
   if (room.phase !== PHASE.STATION_INTRODUCTION) throw new Error('駅導入中ではありません');
   const introduction = stationIntroductionFor(STATIONS[room.stationIndex]?.id);
   if (!introduction) throw new Error('この駅の導入はありません');
-  if (room.stationIntroductionStep < introduction.lines.length) {
+  if (room.stationIntroductionStep < narrativeStepCount(introduction.lines)) {
     room.stationIntroductionStep += 1;
     event(room, 'STATION_INTRODUCTION_ADVANCED', { stationId: STATIONS[room.stationIndex].id, step: room.stationIntroductionStep }, 'gm');
     return;
@@ -1942,8 +1947,8 @@ export function projectState(room, actor) {
     playerName: room.players.find(player => player.participantId === transaction.participantId)?.name,
     currencyLabel: CURRENCY_LABELS[transaction.currency]
   }));
-  const rewardNarration = room.phase === PHASE.REWARD_NARRATION ? { ...stationRewardNarration(room), step: room.rewardNarrationStep } : null;
-  const freeTimeIntroduction = room.phase === PHASE.FREE_TIME_INTRO ? { ...freeTimeNarration(room), step: room.freeTimeIntroductionStep } : null;
+  const rewardNarration = room.phase === PHASE.REWARD_NARRATION ? { ...stationRewardNarration(room), lines: narrativeBlocks(stationRewardNarration(room).lines), step: room.rewardNarrationStep } : null;
+  const freeTimeIntroduction = room.phase === PHASE.FREE_TIME_INTRO ? { ...freeTimeNarration(room), lines: narrativeBlocks(freeTimeNarration(room).lines), step: room.freeTimeIntroductionStep } : null;
   const playtest = room.playtestMode ? (isGm
     ? {
       enabled: true,
@@ -1962,8 +1967,8 @@ export function projectState(room, actor) {
   return {
     code: room.code, testMode: Boolean(room.testMode), playtestMode: Boolean(room.playtestMode), playtest, phase: room.phase, station: room.stationIndex >= 0 ? STATIONS[room.stationIndex] : null,
     stationTurn: room.stationTurn, globalTurnIndex: room.globalTurnIndex, timer: room.timer, introductionStep: room.introductionStep || 0, activeStationEffectIds: activeStationEffectIds(room),
-    gameGuide: room.phase === PHASE.GAME_GUIDE ? { title: GAME_GUIDE.title, lines: GAME_GUIDE.lines, step: room.gameGuideStep } : null,
-    stationIntroduction: stationIntroduction ? { title: stationIntroduction.title, lines: stationIntroduction.lines, step: room.stationIntroductionStep } : null,
+    gameGuide: room.phase === PHASE.GAME_GUIDE ? { title: GAME_GUIDE.title, lines: narrativeBlocks(GAME_GUIDE.lines), step: room.gameGuideStep } : null,
+    stationIntroduction: stationIntroduction ? { title: stationIntroduction.title, lines: narrativeBlocks(stationIntroduction.lines), step: room.stationIntroductionStep } : null,
     rewardNarration,
     freeTimeIntroduction,
     me: actor.role === 'GM' ? { participantId: actor.participantId, role: 'GM', name: actor.name } : privatePlayer(actor, room),
