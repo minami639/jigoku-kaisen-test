@@ -1,0 +1,5 @@
+/* 切り欠きと同じ高さに区切り文字を置く。外側の余白量は維持する。 */
+.ticket-perforation {
+  margin-top: 1px;
+  margin-bottom: 47px;
+}
