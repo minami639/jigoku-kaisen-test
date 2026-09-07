@@ -10,7 +10,7 @@ const now = () => new Date().toISOString();
 // 読み上げは一度に最大2行ずつ表示する。文章そのものは定義側では1行ずつ
 // 保持し、進行用のステップにだけここでまとめる。
 const NARRATIVE_LINES_PER_STEP = 2;
-const narrativeBlocks = lines => Array.from({ length: Math.ceil(lines.length / NARRATIVE_LINES_PER_STEP) }, (_, index) => lines.slice(index * NARRATIVE_LINES_PER_STEP, (index + 1) * NARRATIVE_LINES_PER_STEP));
+const narrativeBlocks = lines => Array.isArray(lines?.[0]) ? lines : Array.from({ length: Math.ceil(lines.length / NARRATIVE_LINES_PER_STEP) }, (_, index) => lines.slice(index * NARRATIVE_LINES_PER_STEP, (index + 1) * NARRATIVE_LINES_PER_STEP));
 const narrativeStepCount = lines => narrativeBlocks(lines).length;
 const INTRODUCTION_STEP_COUNT = Math.ceil(39 / NARRATIVE_LINES_PER_STEP);
 
