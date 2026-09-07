@@ -32,7 +32,7 @@ export function createRoom(gmName = 'GM') {
   const gm = { participantId: id(), authToken: token(), role: 'GM', name: gmName.trim() || 'GM' };
   const room = {
     id: roomId, code, phase: PHASE.LOBBY, gm, players: [], stationIndex: -1, stationTurn: 0,
-    globalTurnIndex: 0, timer: null, revealedUsages: [], stationResult: null, stationResults: [], finalRanking: null, infiniteSurvivorIds: null, finalEnding: null, rewardNarrationStep: 0, freeTimeIntroductionStep: 0, activeStationEffectIds: [], shopStock: Object.fromEntries(SHOP_ITEMS.map(item => [item.id, item.stock])), currencyTransactions: [], purchaseTransactions: [], transferRequests: [], firstPurchaseCompleted: false, events: [], createdAt: now(), updatedAt: now()
+    globalTurnIndex: 0, timer: null, revealedUsages: [], stationResult: null, stationResults: [], finalRanking: null, infiniteSurvivorIds: null, finalEnding: null, rewardNarrationStep: 0, freeTimeIntroductionStep: 0, activeStationEffectIds: [], shopStock: Object.fromEntries(SHOP_ITEMS.map(item => [item.id, item.stock])), currencyTransactions: [], purchaseTransactions: [], transferRequests: [], events: [], createdAt: now(), updatedAt: now()
   };
   event(room, 'ROOM_CREATED', { gmName: gm.name });
   return room;
@@ -81,7 +81,6 @@ function ensureRoomState(room) {
   room.purchaseTransactions ||= [];
   room.transferRequests ||= [];
   room.currencyTransactions ||= [];
-  room.firstPurchaseCompleted ||= false;
   room.stationIntroductionStep ||= 0;
   room.rewardNarrationStep ||= 0;
   room.freeTimeIntroductionStep ||= 0;
@@ -1739,8 +1738,6 @@ function purchaseShopItem(room, player, itemId, requestedPayment) {
   }
   const change = makeChange(paymentTotal - effectivePrice);
   const transactionId = id();
-  const isPrimeChange = ['two', 'three', 'five', 'seven'].some(type => change.coins[type] > 0);
-  const isFirstPurchase = isPrimeChange && !room.firstPurchaseCompleted;
   for (const type of Object.keys(CURRENCY_VALUES)) player.currency[type] -= payment[type];
   for (const type of Object.keys(CURRENCY_VALUES)) player.currency[type] += change.coins[type];
   player.shopInventory.push({ inventoryId: id(), itemId: item.id, transactionId, ownerPlayerId: player.participantId, purchased: true, lastUsedGlobalTurnIndex: null, cooldownUntilGlobalTurnIndex: null, totalUseCount: 0, acquiredAt: now() });
@@ -1752,8 +1749,7 @@ function purchaseShopItem(room, player, itemId, requestedPayment) {
     globalTurnIndex: room.globalTurnIndex, currencyCocofoliaApplied: false, createdAt: now()
   };
   room.purchaseTransactions.push(transaction);
-  if (isPrimeChange) room.firstPurchaseCompleted = true;
-  player.purchaseNotice = { transactionId, itemId: item.id, firstPurchase: isFirstPurchase };
+  player.purchaseNotice = { transactionId, itemId: item.id };
   event(room, 'SHOP_PURCHASE_COMPLETED', { transactionId, itemId: item.id, payment, change }, `private:${player.participantId}`);
 }
 

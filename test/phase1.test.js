@@ -449,8 +449,8 @@ test('GM tracks only purchase currency reflection while the shop card remains We
   room.players[0].currency.five = 1;
   applyAction(room, room.players[0], { type: 'BUY_SHOP_ITEM', itemId: 'will-o-wisp-amulet', payment: payment({ five: 1 }) });
   applyAction(room, room.players[1], { type: 'BUY_SHOP_ITEM', itemId: 'protective-rosary', payment: payment({ one: 2 }) });
-  assert.equal(room.players[0].purchaseNotice.firstPurchase, true);
-  assert.equal(room.players[1].purchaseNotice.firstPurchase, false);
+  assert.deepEqual(Object.keys(room.players[0].purchaseNotice).sort(), ['itemId', 'transactionId']);
+  assert.deepEqual(Object.keys(room.players[1].purchaseNotice).sort(), ['itemId', 'transactionId']);
   const gmView = projectState(room, room.gm);
   assert.equal(gmView.purchaseTransactions[0].playerName, 'テストPL1');
   assert.equal(gmView.purchaseTransactions[0].itemName, '鬼火のお守り');
@@ -482,7 +482,18 @@ test('ice station uses a GM-controlled persistent introduction before its first 
   assert.equal(room.globalTurnIndex, 3);
   const playerView = projectState(room, room.players[0]);
   assert.equal(playerView.stationIntroduction.title, '第二地獄へ');
-  assert.match(playerView.stationIntroduction.lines.join('\n'), /極寒/);
+  assert.deepEqual(playerView.stationIntroduction.lines, [
+    ['自由時間の終了を告げるベルが、車内に響く。', '扉が閉まり、列車は再び走り始めた。'],
+    ['「はぁ〜い、おかえりなさ〜い！」', '「休憩は十分にできましたかぁ？」'],
+    ['電車が進むにつれ、先ほどまで残っていた熱気が消え、代わりに車内が急速に冷えていく。', '白い息が漏れた。'],
+    ['――ピンポーン。', '『第二地獄、氷結地獄。』'],
+    ['扉の向こうには、すべてが白く凍りついた世界が広がっていた。', '「第一地獄は、熱かったですよねぇ？ なので今回は、しっかり冷やしていきましょう！」'],
+    ['── 駅固有效果：極寒 ──', '「第二地獄のルールは、と〜っても簡単！ この場所、とにかく寒いんです！」', '「寒すぎて、みなさんの攻撃も……ちょっと弱くなっちゃいま〜す！」'],
+    ['この地獄では、すべての直接ダメージが−1されます。最低値は0です。', '通常HP−3ならHP−2、HP−1ならHP−0になります。'],
+    ['ただし、毒・火傷などの継続ダメージ、自傷、カード使用の代償、反撃・反射には適用されません。', '個別のカードや駅効果に別記がある場合は、そちらを優先します。'],
+    ['── 氷結地獄：全3ターン ──', '各ターン、議論、カードと対象の選択、一斉公開、効果処理を行います。'],
+    ['「それでは……第二地獄、氷結地獄開始で〜す！」']
+  ]);
   assert.equal(playerView.stationIntroduction.step, 1);
   assert.throws(() => applyAction(room, room.players[0], { type: 'ADVANCE_STATION_INTRODUCTION' }), /GM専用/);
 
@@ -502,7 +513,17 @@ test('needle station introduction is reachable after Ice Hell and needle concent
   applyAction(room, room.gm, { type: 'START_NEXT_STATION' });
   assert.equal(room.phase, 'STATION_INTRODUCTION');
   assert.equal(room.stationIndex, 2);
-  assert.match(projectState(room, room.players[0]).stationIntroduction.lines.join('\n'), /針の集中/);
+  assert.deepEqual(projectState(room, room.players[0]).stationIntroduction.lines, [
+    ['第二地獄を抜けた列車は、再び暗い線路を走り始めた。', '窓の霜が少しずつ溶けていく。'],
+    ['そのとき、乾いた金属音が響く。', 'カン。カン、カン。'],
+    ['窓の外には、地面から突き出す無数の巨大な針。'],
+    ['――ピンポーン。', '『第三地獄、針山地獄。』'],
+    ['── 駅固有效果：針の集中 ──', '「針って一本だけならまだ耐えられそうですけどぉ……」', '「み〜んなで同じ人を狙ったら、大変ですよねぇ？」'],
+    ['同じターンに、同じPLが2人以上の有効な攻撃カードの対象になった場合、通常のカード処理後に駅からHP−1を受けます。', 'この駅ダメージは、1ターンにつき最大1です。'],
+    ['集中攻撃として数えるのは、主分類が「攻撃」の有効なカードのみ。', '無効になった攻撃は数えません。', '防御によって実ダメージが0になっても、攻撃カード自体が有効なら数えます。'],
+    ['── 第三・針山地獄：全3ターン ──', '各ターン、議論、カードと対象の選択、一斉公開、効果処理、集中攻撃判定を行います。'],
+    ['「それでは……第三地獄、針山地獄開始で〜す！」']
+  ]);
 
   applyAction(room, room.gm, { type: 'TEST_JUMP_PHASE', phase: 'TURN_SELECTION', stationIndex: 2, stationTurn: 1 });
   const cardIds = ['flame-strike', 'ice-spear', 'follow-needle', 'vampire', 'gluttony', 'heavy-slash', 'severance'];
@@ -518,7 +539,17 @@ test('needle station introduction is reachable after Ice Hell and needle concent
 test('Blood Hell introduction is available and Blood Tide adds one to real recovery', () => {
   const room = createTestRoom();
   applyAction(room, room.gm, { type: 'TEST_JUMP_PHASE', phase: 'STATION_INTRODUCTION', stationIndex: 3, stationTurn: 0 });
-  assert.match(projectState(room, room.players[0]).stationIntroduction.lines.join('\n'), /血潮/);
+  assert.deepEqual(projectState(room, room.players[0]).stationIntroduction.lines, [
+    ['針山地獄を抜けた列車は、再び暗闇の中を走り始めた。'],
+    ['「いやぁ〜、針って怖いですねぇ！」', '「……おや？ 今度はずいぶん血なまぐさくなってきましたねぇ？」'],
+    ['窓の外は、いつの間にか赤一色に染まっている。'],
+    ['――ピンポーン。', '『第四地獄、血の池地獄。』'],
+    ['── 駅固有效果：血潮 ──', '「ここでは、治したり、吸い取ったり、やり返したりすると……いつもより元気になりま〜す！」', 'この地獄では、回復量、吸収による回復量、反撃ダメージ、反射ダメージが、それぞれ＋1されます。', '各カードにつき、それぞれ最大＋1です。'],
+    ['通常攻撃、追加攻撃、継続ダメージ、駅固有ダメージ、自傷、カード使用の代償は増加しません。', '最大HPは15です。'],
+    ['吸収は、対象へ実ダメージを1以上与えた場合のみ発生します。', '反撃・反射も、実際に発動条件を満たした場合のみ＋1されます。'],
+    ['── 第四・血の池地獄：全3ターン ──', '各ターン、議論、カードと対象の選択、一斉公開、効果処理、血潮点集計を行います。'],
+    ['「それでは……第四地獄、血の池地獄開始で〜す！」']
+  ]);
 
   applyAction(room, room.gm, { type: 'TEST_JUMP_PHASE', phase: 'TURN_SELECTION', stationIndex: 3, stationTurn: 1 });
   room.players[0].hp = 10;
@@ -657,8 +688,22 @@ test('third scorch result follows reward narration, Cocofolia sync, and GM-start
   applyAction(room, room.gm, { type: 'START_FREE_TIME' });
   assert.equal(room.phase, 'FREE_TIME_INTRO');
   const freeTimeNarration = projectState(room, room.players[0]).freeTimeIntroduction;
-  assert.match(freeTimeNarration.lines.flat().join('\n'), /第一ショップ/);
-  assert.match(freeTimeNarration.lines.flat().join('\n'), /1ターンに使えるSHOPカードは1枚まで/);
+  assert.deepEqual(freeTimeNarration.lines, [
+    ['列車が再び走り出す。', '窓の外では、焦熱地獄の炎が少しずつ遠ざかっていった。'],
+    ['――ピンポーン。', '『第一地獄、終了。』'],
+    ['「おつかれさまで〜す！」', '「次の地獄までは、しばらく自由時間！」'],
+    ['「お手洗いに行くもよし、飲み物を取るもよし、今のうちにゆっくり休んでくださ〜い！」', '「もちろん、みなさん同士でお話ししても大丈夫ですよぉ！」'],
+    ['「自由時間中はプレイヤー同士で冥貨を自由に受け渡すことができま～す。」', '「貸すのも、あげるのも、取引に使うのも自由で〜す！」'],
+    ['「さらに、ショップで冥貨を使って買い物をすることもできま～す。」', '「地獄の合間も、しっかり有効活用してくださいねぇ！」'],
+    ['「ここで初めて、第一ショップが開きま〜す！」', '「ショップでは冥貨を払って、SHOPカードが買えますよぉ！」'],
+    ['「お支払いに使う冥貨の種類と枚数は、好きに選んでください！」', '「払った価値が商品の値段以上なら、お買い上げ。払いすぎた分はおつりでお返しします！」'],
+    ['「ただし、払いすぎは値段より7まで。おつりの冥貨はGMさんがココフォリアへ反映します！」', '「買ったSHOPカードはWebで持ち続けます。ココフォリアで動かすのは冥貨だけですよぉ！」'],
+    ['「ゲーム中では、七獄カードを選ぶ画面でSHOPカードも一緒に選べます！」', '「1ターンに使えるSHOPカードは1枚まで。使ったカードは、次の1ターンだけお休みです！」'],
+    ['「でもその次のターンからは、何度でもまた使えますからねぇ！」', '「商品はひとつにつき在庫1。売り切れた商品を、もう一度買うことはできません！」'],
+    ['「誰が買ったかは、使うまでは秘密。じっくり悩んでくださいねぇ！」'],
+    ["「もう休憩が必要ないという場合は、『準備完了』ボタンを押してくださいね～！」", '「それではしばらく、ごゆっくり〜！」']
+  ]);
+  assert.equal(freeTimeNarration.step, 1);
   while (room.phase === 'FREE_TIME_INTRO') applyAction(room, room.gm, { type: 'ADVANCE_FREE_TIME_INTRODUCTION' });
   assert.equal(room.phase, 'FREE_TIME');
   assert.equal(room.timer.endsAt - room.timer.startedAt, 300_000);
