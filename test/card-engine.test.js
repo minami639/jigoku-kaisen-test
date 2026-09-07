@@ -90,6 +90,22 @@ test('station modifiers: ice, scorch, war, blood, needle, and infinite sampled e
   assert.deepEqual(infinite.events.find(event => event.type === 'TURN_RESOLVED').payload.stationEffects, ['ice', 'war']);
 });
 
+test('direct damage has no numeric cap and each Hell card accepts at most two bonus effects', () => {
+  const room = roomAt(0);
+  const owner = room.players[0];
+  const target = room.players[1];
+  owner.hp = 14;
+  owner.cardMarks.immolation = { embers: { sourceId: owner.participantId } };
+  const amulet = grantShop(owner, 'will-o-wisp-amulet');
+
+  resolve(room, { 0: { cardId: 'immolation', targetId: target.participantId, shopEntryId: amulet.inventoryId } });
+
+  const damageEvents = room.events.filter(event => event.type === 'DIRECT_DAMAGE' && event.payload.cardId === 'immolation');
+  assert.equal(damageEvents.reduce((sum, event) => sum + event.payload.amount, 0), 6, '条件強化4に灼熱と残火の2加算を適用し、数値上限は設けない');
+  assert.equal(target.hp, 9);
+  assert.ok(!damageEvents.some(event => event.payload.component === 'SHOP_ATTACK_BONUS'), '3個目の鬼火のお守り加算は適用しない');
+});
+
 test('all 35 cards have an executable engine path', () => {
   for (const card of CARDS) {
     const room = roomAt(card.id === 'encore' ? 6 : 3);

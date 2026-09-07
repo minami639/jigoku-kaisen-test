@@ -156,7 +156,7 @@ export const SHOP_BY_STATION_ID = Object.fromEntries(SHOP_DEFINITIONS.map(shop =
 const SHOP_UNLOCK_AFTER_STATION_BY_ID = Object.fromEntries(SHOP_DEFINITIONS.map(shop => [shop.id, shop.unlockAfterStation]));
 
 export const SHOP_ITEMS = [
-  { id: 'will-o-wisp-amulet', shop: 1, name: '鬼火のお守り', price: 3, effect: '自分が選んだ七獄カードの直接ダメージ＋1。上限4。', effectType: 'ATTACK_BONUS', stock: 1 },
+  { id: 'will-o-wisp-amulet', shop: 1, name: '鬼火のお守り', price: 3, effect: '自分が選んだ七獄カードの直接ダメージ＋1。加算効果は最大2個まで。', effectType: 'ATTACK_BONUS', stock: 1 },
   { id: 'protective-rosary', shop: 1, name: '護りの数珠', price: 2, effect: 'このターン、指定した自分以外のPL1人が受ける直接ダメージを合計1軽減。', effectType: 'ALLY_DIRECT_REDUCTION', stock: 1 },
   { id: 'red-bandage', shop: 1, name: '赤い包帯', price: 3, effect: 'カード処理終了後、自分HP＋1。', effectType: 'POST_HEAL', stock: 1 },
   { id: 'needle-ward', shop: 2, name: '針除けの護符', price: 3, effect: 'このターン、自分が受ける直接ダメージを合計1軽減。', effectType: 'DIRECT_REDUCTION', stock: 1 },

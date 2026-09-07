@@ -35,12 +35,12 @@ const PACK_PRESENTATION = Object.freeze({
   infinite: { hell: '第七獄', station: '無間地獄', code: 'AVICI', motif: '∞' }
 });
 const STATION_EFFECT_DETAILS = Object.freeze({
-  scorch: '主分類が「攻撃」の七獄カードによる直接ダメージを＋1します。単体直接ダメージの上限は4です。強化後の直接ダメージが4以上なら、使用者はHP−1を受けます。',
+  scorch: '主分類が「攻撃」の七獄カードによる直接ダメージを＋1します。同じ七獄カードへの直接ダメージ加算は、駅効果・カード・SHOPを含めて最大2個です。直接ダメージが4以上なら、使用者はHP−1を受けます。',
   ice: 'すべての直接ダメージを−1します（最低0）。継続ダメージ、自傷、カード使用の代償、駅ダメージ、反撃・反射には適用しません。',
   needle: '同じターンに同じPLが有効な攻撃カード2枚以上の最終対象になると、通常のカード処理後に駅からHP−1を受けます。1ターンにつき最大1回です。',
   blood: '回復、吸収による回復、反撃、反射を各カードにつき最大＋1します。実際に回復したHPだけが支援点などの対象です。通常攻撃・継続ダメージ・自傷・代償は強化しません。',
   hunger: '各PLはこの駅で1回だけ、通常クールタイム中の七獄カードを再使用できます。【強奪】による使用不能は無視できません。再使用後、使用者はHP−1を受けます。',
-  war: '主分類が「攻撃」の直接ダメージ、主分類が「防御」の数値軽減、反撃・反射ダメージを各カードにつき最大＋1します。単体直接ダメージの上限4は維持されます。'
+  war: '主分類が「攻撃」の直接ダメージ、主分類が「防御」の数値軽減、反撃・反射ダメージを各カードにつき最大＋1します。直接ダメージ加算は、駅効果・カード・SHOPを含めて同じ七獄カードにつき最大2個です。'
 });
 const currencyCoinsLabel = coins => CURRENCY_TYPES.filter(([type]) => coins?.[type]).map(([type, label]) => `${label}×${coins[type]}`).join('、') || 'なし';
 const phaseName = () => ({ LOBBY: '乗車受付', INTRODUCTION: '導入', SELF_INTRODUCTION: '自己紹介', GAME_GUIDE: 'ゲーム説明', PACK_SELECTION: 'パック選択', TURN_SELECTION: 'カード秘密選択', TURN_RESULT: 'ターン結果', STATION_RESULT: '駅結果', REWARD_NARRATION: '報酬発表', CURRENCY_SYNC_WAIT: '冥貨反映待機', FREE_TIME_INTRO: '自由時間の案内', FREE_TIME: '自由時間・休憩', STATION_INTRODUCTION: '駅導入', FINAL_RANKING: '最終順位', FINAL_ALIGNMENT: '最終整線', FINAL_JUDGMENT: 'GM最終判定', ENDING: 'エンディング' }[state.phase]);

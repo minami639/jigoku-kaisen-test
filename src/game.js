@@ -6,6 +6,7 @@ import { stationIntroductionFor } from './station-introductions.js';
 export const PHASE = Object.freeze({ LOBBY: 'LOBBY', INTRODUCTION: 'INTRODUCTION', SELF_INTRODUCTION: 'SELF_INTRODUCTION', GAME_GUIDE: 'GAME_GUIDE', PACK_SELECTION: 'PACK_SELECTION', TURN_SELECTION: 'TURN_SELECTION', TURN_RESULT: 'TURN_RESULT', STATION_RESULT: 'STATION_RESULT', REWARD_NARRATION: 'REWARD_NARRATION', CURRENCY_SYNC_WAIT: 'CURRENCY_SYNC_WAIT', FREE_TIME_INTRO: 'FREE_TIME_INTRO', FREE_TIME: 'FREE_TIME', STATION_INTRODUCTION: 'STATION_INTRODUCTION', FINAL_RANKING: 'FINAL_RANKING', FINAL_ALIGNMENT: 'FINAL_ALIGNMENT', FINAL_JUDGMENT: 'FINAL_JUDGMENT', ENDING: 'ENDING' });
 const token = () => crypto.randomBytes(24).toString('base64url');
 const id = () => crypto.randomUUID();
+const MAX_DIRECT_DAMAGE_BONUS_EFFECTS_PER_CARD = 2;
 const now = () => new Date().toISOString();
 // 読み上げは一度に最大2行ずつ表示する。文章そのものは定義側では1行ずつ
 // 保持し、進行用のステップにだけここでまとめる。
@@ -798,7 +799,7 @@ function resolveTurnLegacy(room) {
       if (use.player.isDeadState) value -= 1;
       const seed = fireSeeds.find(seedUse => seedUse.targetId === use.player.participantId);
       if (seed) value += 1;
-      return { ...use, value: Math.max(0, Math.min(4, value)), seed };
+      return { ...use, value: Math.max(0, value), seed };
     }).sort((a, b) => b.value - a.value || a.player.playerNumber - b.player.playerNumber);
 
   for (const attack of attacks) {
@@ -919,18 +920,10 @@ function engineAttackDown(room, player) {
   return Math.max(0, ...player.ongoingEffects.filter(effect => effect.stackKey === 'ATTACK_DAMAGE_DOWN' && effect.stationIndex === room.stationIndex).map(effect => effect.value || 0));
 }
 function engineSupportOrder(room, participantId) { return supportOrderIndex(room, participantId); }
-function engineCap(room, attack) {
-  const base = attack.components[0];
-  base.amount = Math.max(0, Math.min(4, base.amount));
-  let remaining = 4 - base.amount;
-  const supports = attack.components.slice(1).sort((a, b) => engineSupportOrder(room, a.source.participantId) - engineSupportOrder(room, b.source.participantId));
-  attack.components = [base];
-  for (const component of supports) {
-    const accepted = Math.max(0, Math.min(component.amount, remaining));
-    if (accepted) attack.components.push({ ...component, amount: accepted });
-    remaining -= accepted;
-  }
-  attack.beforeDefense = attack.components.reduce((sum, component) => sum + component.amount, 0);
+function engineDirectDamageBonusEffects(room, effects) {
+  const stationEffects = effects.filter(effect => effect.reason === 'STATION_ATTACK_BONUS');
+  const supportEffects = effects.filter(effect => effect.reason !== 'STATION_ATTACK_BONUS').sort((a, b) => engineSupportOrder(room, a.source.participantId) - engineSupportOrder(room, b.source.participantId));
+  return [...stationEffects, ...supportEffects].slice(0, MAX_DIRECT_DAMAGE_BONUS_EFFECTS_PER_CARD);
 }
 function engineAddDefense(defenses, targetId, defense) {
   const list = defenses.get(targetId) || [];
@@ -1126,20 +1119,25 @@ function engineBasicAttacks(room, usages, snapshot, modifiers, defenses, boosts)
     const copied = use.copied?.kind === 'attack';
     let base = copied ? use.copied.value : use.effect.baseDamage || 0;
     if (engineCondition(room, use, snapshot, defenses)) base += use.effect.conditionDamage || 0;
-    if (!copied && use.card.category === 'attack') base += modifiers.attackBonus;
+    const bonusEffects = [];
+    if (!copied && use.card.category === 'attack' && modifiers.attackBonus) bonusEffects.push({ source: use.player, amount: modifiers.attackBonus, type: 'STATION_ATTACK_BONUS', reason: 'STATION_ATTACK_BONUS' });
+    const mark = use.player.cardMarks[use.card.id];
+    if (mark?.embers) {
+      bonusEffects.push({ source: playerById(room, mark.embers.sourceId) || use.player, amount: 1, type: 'EMBERS', reason: 'EMBERS' });
+      delete use.player.cardMarks[use.card.id].embers;
+      event(room, 'EMBER_CONSUMED', { participantId: use.player.participantId, cardId: use.card.id });
+    }
+    for (const boost of boosts.get(use) || []) bonusEffects.push({ source: boost.source, amount: boost.amount, type: boost.reason, reason: boost.reason });
+    const acceptedBonusEffects = engineDirectDamageBonusEffects(room, bonusEffects);
+    const stationBonus = acceptedBonusEffects.filter(effect => effect.reason === 'STATION_ATTACK_BONUS').reduce((sum, effect) => sum + effect.amount, 0);
+    base += stationBonus;
     if (!copied && use.card.category === 'attack') base = Math.max(0, base - engineAttackDown(room, use.player));
     base = Math.max(0, base - modifiers.directDamagePenalty);
     if (use.player.turnStartDeadState) base = Math.max(0, base - 1);
     const components = [{ source: use.player, amount: base, type: 'BASE' }];
-    const mark = use.player.cardMarks[use.card.id];
-    if (mark?.embers) {
-      components.push({ source: playerById(room, mark.embers.sourceId) || use.player, amount: 1, type: 'EMBERS' });
-      delete use.player.cardMarks[use.card.id].embers;
-      event(room, 'EMBER_CONSUMED', { participantId: use.player.participantId, cardId: use.card.id });
-    }
-    for (const boost of boosts.get(use) || []) components.push({ source: boost.source, amount: boost.amount, type: boost.reason });
+    for (const effect of acceptedBonusEffects.filter(effect => effect.reason !== 'STATION_ATTACK_BONUS')) components.push({ source: effect.source, amount: effect.amount, type: effect.type });
     const attack = { use, player: use.player, targetId: use.targetId, phase: 'basic', ignoresDefense: Boolean(use.effect.ignoresDefense), components, actual: 0, prevented: 0 };
-    engineCap(room, attack);
+    attack.beforeDefense = attack.components.reduce((sum, component) => sum + component.amount, 0);
     if (modifiers.scorchCostAt && use.card.category === 'attack' && attack.beforeDefense >= modifiers.scorchCostAt) use.scorchCost = 1;
     attacks.push(attack);
   }
@@ -1252,7 +1250,6 @@ function engineAdditionalAttacks(room, basicAttacks, modifiers, focusCounts) {
     if (use.card.category === 'attack') amount = Math.max(0, amount - engineAttackDown(room, use.player));
     amount = Math.max(0, amount - modifiers.directDamagePenalty);
     if (use.player.turnStartDeadState) amount = Math.max(0, amount - 1);
-    amount = Math.min(amount, Math.max(0, 4 - basic.beforeDefense));
     if (amount) output.push({ use, player: use.player, targetId: use.targetId, phase: 'additional', ignoresDefense: false, components: [{ source: use.player, amount, type: 'ADDITIONAL' }], beforeDefense: amount, actual: 0, prevented: 0 });
   }
   return output;
