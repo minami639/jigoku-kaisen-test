@@ -1,7 +1,7 @@
 const app = document.querySelector('#app');
 const toast = document.querySelector('#toast');
 const session = JSON.parse(localStorage.getItem('jigoku-session') || 'null');
-let state = null, stream = null, tick = null, previewParticipantId = null, gmTab = 'progress', dismissedResultKey = null, freeTimeView = 'rest', narrativeScrollPending = false;
+let state = null, stream = null, tick = null, previewParticipantId = null, gmTab = 'progress', dismissedResultKey = null, freeTimeView = 'rest', narrativeScrollPending = false, rulebookOpen = false;
 
 const esc = value => String(value ?? '').replace(/[&<>"]/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[char]));
 const statusDisplayNames = Object.freeze({ COOLDOWN_EXTENSION: '【強奪】', ATTACK_DAMAGE_DOWN: '攻撃ダメージ低下', POISON: '毒', BURN: '火傷', TARGET_RESTRICTION: '対象制限' });
@@ -108,7 +108,38 @@ function stationEffectEntries(station) { if (station?.id !== 'infinite') return 
 function stationEffectHeaderText(station) { const entries = stationEffectEntries(station); return station?.id === 'infinite' && entries.length ? entries.map(item => `${item.name.replace(/^第.・/, '')}：${item.effect}`).join(' ／ ') : station?.effect || ''; }
 function stationEffectDetailText(station) { const entries = stationEffectEntries(station); if (station?.id !== 'infinite') return STATION_EFFECT_DETAILS[station?.effectId] || station?.effect || ''; const replayed = entries.map(item => `${item.name.replace(/^第.・/, '')}\n${STATION_EFFECT_DETAILS[item.effectId] || item.effect}`).join('\n\n'); return `${replayed}\n\n同種の数値強化は重複せず、大きい値だけを適用します。数値以外の条件・代償は併存します。`; }
 function stationEffectTooltipHtml(station) { return `<span class="station-effect-tooltip" role="tooltip"><strong>詳しい効果</strong><span>${esc(stationEffectDetailText(station)).replace(/\n/g, '<br>')}</span></span>`; }
-function gameHeaderHtml(roleLabel) { const station = state.station; const disclosure = stationBriefingDisclosure(); const turn = state.phase === 'STATION_INTRODUCTION' ? (disclosure.rounds ? `全${station?.turnCount || '—'}ターン` : '—') : station ? `${state.stationTurn} / ${station.turnCount}` : '—'; return `<section class="game-header"><div><span class="eyebrow">${esc(roleLabel)}</span><strong>${station ? esc(station.name) : phaseName()}</strong></div><div class="header-stat ${disclosure.rounds ? 'briefing-revealed' : ''}"><span>TURN</span><b>${turn}</b></div><div class="header-stat"><span>PHASE</span><b>${phaseName()}</b></div><div class="header-stat timer-stat"><span>TIME</span>${timerHtml(true)}</div>${station && disclosure.effect ? `<div class="station-effect briefing-revealed" tabindex="0" aria-label="駅固有效果の詳細を表示"><span>駅固有效果 <small>詳細</small></span><b>${esc(stationEffectHeaderText(station))}</b>${stationEffectTooltipHtml(station)}</div>` : ''}</section>`; }
+function rulebookStationEntries() {
+  const currentIndex = state.station ? state.stations.findIndex(item => item.id === state.station.id) : -1;
+  if (currentIndex < 0) return [];
+  const currentEffectRevealed = state.phase !== 'STATION_INTRODUCTION' || stationBriefingDisclosure().effect;
+  return state.stations.slice(0, currentIndex + (currentEffectRevealed ? 1 : 0));
+}
+function shopRulesRevealed() {
+  const stationIndex = state.station ? state.stations.findIndex(item => item.id === state.station.id) : -1;
+  return stationIndex > 0 || (stationIndex === 0 && ['FREE_TIME_INTRO', 'FREE_TIME'].includes(state.phase));
+}
+function rulebookStationHtml(station) {
+  const isCurrent = state.station?.id === station.id;
+  const detail = isCurrent ? stationEffectDetailText(station) : (STATION_EFFECT_DETAILS[station.effectId] || station.effect);
+  const summary = isCurrent ? stationEffectHeaderText(station) : station.effect;
+  return `<article class="rulebook-station ${isCurrent ? 'is-current' : ''}"><div><span>${esc(station.name)}</span><b>${esc(summary)}</b></div><p>${esc(detail)}</p><small>全${station.turnCount}ターン</small></article>`;
+}
+function rulebookHtml() {
+  const stationEntries = rulebookStationEntries();
+  const packs = state.packs || [];
+  return `<div class="rulebook-backdrop" role="presentation"><section class="rulebook-modal" role="dialog" aria-modal="true" aria-labelledby="rulebookTitle"><header><div><span class="eyebrow">RULEBOOK</span><h2 id="rulebookTitle">公開ルール一覧</h2><p>読み上げ済みの公開ルールを、いつでも確認できます。</p></div><button type="button" class="secondary small" data-close-rulebook>閉じる</button></header><div class="rulebook-body"><details class="rulebook-section" open><summary>基本ルール</summary><dl class="rulebook-list"><div><dt>ターンの流れ</dt><dd>相談 → 七獄カードと対象を秘密選択 → 最終確認 → 全員確定後にGMが一斉公開 → 効果処理</dd></div><div><dt>HPと亡者状態</dt><dd>初期・最大HPは15です。駅中に一度でもHP0になると、その駅の間は亡者状態になります。カード選択や会話は続けられますが、直接ダメージ−1、駅順位と特殊ボーナスの対象外です。</dd></div><div><dt>七獄カードのCT</dt><dd>使用した七獄カードは次の1ターンだけ使用できず、その次のターンから再使用できます。駅をまたいでも継続します。</dd></div></dl></details><details class="rulebook-section" open><summary>七獄パック</summary><div class="rulebook-pack-grid">${packs.map(pack => `<article><b>${esc(pack.name)}</b><span>${esc(pack.specialty)}</span><small>五枚一組</small></article>`).join('')}</div><p class="rulebook-note">パックは一人一つずつ選び、同じパックを二人で選ぶことはできません。</p></details>${shopRulesRevealed() ? `<details class="rulebook-section" open><summary>冥貨とSHOP</summary><dl class="rulebook-list"><div><dt>冥貨</dt><dd>ココフォリアで管理します。譲渡はWebからGMへ申請し、GMが処理します。</dd></div><div><dt>購入</dt><dd>自由時間に、使用可能な冥貨を好きな組み合わせで投入します。支払額は商品価格以上、商品価格＋7以下です。超過分はおつりとして返却されます。</dd></div><div><dt>SHOPカード</dt><dd>購入後はWeb上でゲーム終了まで所持します。1ターンに使えるのは1枚まで。使用したカードは次の1ターンだけCTとなり、その次から再使用できます。</dd></div><div><dt>在庫と公開</dt><dd>各商品は在庫1です。購入者と所持SHOPは、使用するまで他PLへ公開されません。使用したSHOPと効果は一斉公開時に公開されます。</dd></div></dl><p class="rulebook-note">解禁済みの商品は、以降の自由時間でも購入できます。SHOPカード自体はココフォリアへ反映しません。</p></details>` : ''}${stationEntries.length ? `<details class="rulebook-section" open><summary>到着済みの駅ルール</summary><div class="rulebook-stations">${stationEntries.map(rulebookStationHtml).join('')}</div></details>` : ''}</div></section></div>`;
+}
+function renderRulebook() {
+  document.querySelector('.rulebook-backdrop')?.remove();
+  if (!rulebookOpen || !state) return;
+  document.body.insertAdjacentHTML('beforeend', rulebookHtml());
+}
+function bindRulebook() {
+  document.querySelectorAll('[data-open-rulebook]').forEach(button => button.addEventListener('click', () => { rulebookOpen = true; renderRulebook(); }));
+  document.querySelectorAll('[data-close-rulebook]').forEach(button => button.addEventListener('click', () => { rulebookOpen = false; renderRulebook(); }));
+  document.querySelector('.rulebook-backdrop')?.addEventListener('click', event => { if (event.target === event.currentTarget) { rulebookOpen = false; renderRulebook(); } });
+}
+function gameHeaderHtml(roleLabel) { const station = state.station; const disclosure = stationBriefingDisclosure(); const turn = state.phase === 'STATION_INTRODUCTION' ? (disclosure.rounds ? `全${station?.turnCount || '—'}ターン` : '—') : station ? `${state.stationTurn} / ${station.turnCount}` : '—'; return `<section class="game-header"><div><span class="eyebrow">${esc(roleLabel)}</span><strong>${station ? esc(station.name) : phaseName()}</strong></div><div class="header-stat ${disclosure.rounds ? 'briefing-revealed' : ''}"><span>TURN</span><b>${turn}</b></div><div class="header-stat"><span>PHASE</span><b>${phaseName()}</b></div><div class="header-stat timer-stat"><span>TIME</span>${timerHtml(true)}</div><div class="header-rulebook"><button type="button" class="secondary small" data-open-rulebook>ルール一覧</button></div>${station && disclosure.effect ? `<div class="station-effect briefing-revealed" tabindex="0" aria-label="駅固有效果の詳細を表示"><span>駅固有效果 <small>詳細</small></span><b>${esc(stationEffectHeaderText(station))}</b>${stationEffectTooltipHtml(station)}</div>` : ''}</section>`; }
 
 function introductionHtml() { return `<section class="panel script"><header class="script-header"><div><span class="eyebrow">導入「地獄廻線」</span><h2>地獄廻線</h2></div></header>${narrativeParagraphs(INTRODUCTION_LINES, state.introductionStep)}</section>`; }
 function applyIntroductionProgress() { if (state.phase !== 'INTRODUCTION') return; document.querySelectorAll('.script').forEach(script => { script.querySelectorAll(':scope > p').forEach((element, index) => { element.hidden = index >= state.introductionStep; }); }); }
@@ -138,7 +169,7 @@ function selfIntroductionHtml(viewerId = null) {
 }
 
 function scrollNarrativeIntoView() { const target = document.querySelector('.narrative-block.is-current:not([hidden])') || document.querySelector('.intro-actions') || [...document.querySelectorAll('.script > p')].filter(line => !line.hidden).at(-1); target?.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
-function render() { if (!state) return; base(); if (state.me.role === 'GM') renderGm(); else renderPlayer(); bindFreeTimeNavigation(); showResultModal(); showPurchaseModal(); applyIntroductionProgress(); if (narrativeScrollPending) { narrativeScrollPending = false; requestAnimationFrame(scrollNarrativeIntoView); } clearInterval(tick); tick = setInterval(updateTimer, 1000); }
+function render() { if (!state) return; base(); if (state.me.role === 'GM') renderGm(); else renderPlayer(); bindFreeTimeNavigation(); showResultModal(); showPurchaseModal(); renderRulebook(); bindRulebook(); applyIntroductionProgress(); if (narrativeScrollPending) { narrativeScrollPending = false; requestAnimationFrame(scrollNarrativeIntoView); } clearInterval(tick); tick = setInterval(updateTimer, 1000); }
 function updateTimer() { document.querySelectorAll('.timer').forEach(old => { old.outerHTML = timerHtml(old.classList.contains('compact')); }); const finish = document.querySelector('#openPacks'); if (finish && state.timer && Date.now() >= state.timer.endsAt) { finish.disabled = false; finish.textContent = '自己紹介を終了してパック選択へ'; } }
 function base() { document.querySelector('#roomBadge').innerHTML = `<span class="pill">ROOM ${esc(state.code)}</span> <button class="secondary small" id="leave">退出</button>`; setTimeout(() => document.querySelector('#leave')?.addEventListener('click', () => { localStorage.removeItem('jigoku-session'); location.reload(); }), 0); }
 
