@@ -1,5 +1,6 @@
 export const GAME_GUIDE = {
   title: 'ゲーム説明',
+  rulebookDisclosureSteps: Object.freeze({ basicRules: 7, packs: 11 }),
   lines: [
     '「それじゃあ、まずは基本ルールからご説明しま〜す！」',
     '「皆さんは七つの地獄を順番に巡って、最後までこの列車に乗り続けてもらいます！」',

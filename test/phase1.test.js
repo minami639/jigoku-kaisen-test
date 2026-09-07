@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { applyAction, createRoom, createTestRoom, joinRoom, projectState } from '../src/game.js';
 import { PACKS, CARDS, STATIONS, SHOP_DEFINITIONS, SHOP_ITEMS } from '../src/definitions.js';
+import { GAME_GUIDE } from '../src/game-guide.js';
 
 function completeSelfIntroductions(room) {
   room.players.forEach(player => applyAction(room, player, { type: 'COMPLETE_SELF_INTRODUCTION' }));
@@ -93,6 +94,11 @@ test('game guide is shown after self-introduction and every player starts with n
   const playerView = projectState(room, room.players[0]);
   assert.match(playerView.gameGuide.lines.join('\n'), /ココフォリア/);
   assert.ok(playerView.gameGuide.lines.every(block => Array.isArray(block) && block.length >= 1 && block.length <= 2));
+  assert.deepEqual(playerView.rulebookDisclosure, { basicRules: false, packs: false });
+  while (room.gameGuideStep < GAME_GUIDE.rulebookDisclosureSteps.basicRules) applyAction(room, room.gm, { type: 'ADVANCE_GAME_GUIDE' });
+  assert.deepEqual(projectState(room, room.players[0]).rulebookDisclosure, { basicRules: true, packs: false });
+  while (room.gameGuideStep < GAME_GUIDE.rulebookDisclosureSteps.packs) applyAction(room, room.gm, { type: 'ADVANCE_GAME_GUIDE' });
+  assert.deepEqual(projectState(room, room.players[0]).rulebookDisclosure, { basicRules: true, packs: true });
   assert.throws(() => applyAction(room, room.players[0], { type: 'ADVANCE_GAME_GUIDE' }), /GM専用/);
   while (room.gameGuideStep < playerView.gameGuide.lines.length) applyAction(room, room.gm, { type: 'ADVANCE_GAME_GUIDE' });
   applyAction(room, room.gm, { type: 'ADVANCE_GAME_GUIDE' });

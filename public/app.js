@@ -124,10 +124,23 @@ function rulebookStationHtml(station) {
   const summary = isCurrent ? stationEffectHeaderText(station) : station.effect;
   return `<article class="rulebook-station ${isCurrent ? 'is-current' : ''}"><div><span>${esc(station.name)}</span><b>${esc(summary)}</b></div><p>${esc(detail)}</p><small>全${station.turnCount}ターン</small></article>`;
 }
+function basicRulebookHtml() {
+  return '<details class="rulebook-section" open><summary>基本ルール</summary><dl class="rulebook-list"><div><dt>ターンの流れ</dt><dd>相談 → 七獄カードと対象を秘密選択 → 最終確認 → 全員確定後にGMが一斉公開 → 効果処理</dd></div><div><dt>HPと亡者状態</dt><dd>初期・最大HPは15です。駅中に一度でもHP0になると、その駅の間は亡者状態になります。カード選択や会話は続けられますが、直接ダメージ−1、駅順位と特殊ボーナスの対象外です。</dd></div><div><dt>七獄カードのCT</dt><dd>使用した七獄カードは次の1ターンだけ使用できず、その次のターンから再使用できます。駅をまたいでも継続します。</dd></div><div><dt>無間地獄の生還</dt><dd>第七地獄で一度もHP0にならず、最終ターン終了時もHP1以上のPLは、路線図によるエンディングとは別に天国へ向かいます。</dd></div></dl></details>';
+}
+function packRulebookHtml(packs) {
+  return `<details class="rulebook-section" open><summary>七獄パック</summary><div class="rulebook-pack-grid">${packs.map(pack => `<article><b>${esc(pack.name)}</b><span>${esc(pack.specialty)}</span><small>五枚一組</small></article>`).join('')}</div><p class="rulebook-note">パックは一人一つずつ選び、同じパックを二人で選ぶことはできません。</p></details>`;
+}
 function rulebookHtml() {
   const stationEntries = rulebookStationEntries();
   const packs = state.packs || [];
-  return `<div class="rulebook-backdrop" role="presentation"><section class="rulebook-modal" role="dialog" aria-modal="true" aria-labelledby="rulebookTitle"><header><div><span class="eyebrow">RULEBOOK</span><h2 id="rulebookTitle">公開ルール一覧</h2><p>読み上げ済みの公開ルールを、いつでも確認できます。</p></div><button type="button" class="secondary small" data-close-rulebook>閉じる</button></header><div class="rulebook-body"><details class="rulebook-section" open><summary>基本ルール</summary><dl class="rulebook-list"><div><dt>ターンの流れ</dt><dd>相談 → 七獄カードと対象を秘密選択 → 最終確認 → 全員確定後にGMが一斉公開 → 効果処理</dd></div><div><dt>HPと亡者状態</dt><dd>初期・最大HPは15です。駅中に一度でもHP0になると、その駅の間は亡者状態になります。カード選択や会話は続けられますが、直接ダメージ−1、駅順位と特殊ボーナスの対象外です。</dd></div><div><dt>七獄カードのCT</dt><dd>使用した七獄カードは次の1ターンだけ使用できず、その次のターンから再使用できます。駅をまたいでも継続します。</dd></div><div><dt>無間地獄の生還</dt><dd>第七地獄で一度もHP0にならず、最終ターン終了時もHP1以上のPLは、路線図によるエンディングとは別に天国へ向かいます。</dd></div></dl></details><details class="rulebook-section" open><summary>七獄パック</summary><div class="rulebook-pack-grid">${packs.map(pack => `<article><b>${esc(pack.name)}</b><span>${esc(pack.specialty)}</span><small>五枚一組</small></article>`).join('')}</div><p class="rulebook-note">パックは一人一つずつ選び、同じパックを二人で選ぶことはできません。</p></details>${shopRulesRevealed() ? `<details class="rulebook-section" open><summary>冥貨とSHOP</summary><dl class="rulebook-list"><div><dt>冥貨</dt><dd>ココフォリアで管理します。譲渡はWebからGMへ申請し、GMが処理します。</dd></div><div><dt>購入</dt><dd>自由時間に、使用可能な冥貨を好きな組み合わせで投入します。支払額は商品価格以上、商品価格＋7以下です。超過分はおつりとして返却されます。</dd></div><div><dt>SHOPカード</dt><dd>購入後はWeb上でゲーム終了まで所持します。1ターンに使えるのは1枚まで。使用したカードは次の1ターンだけCTとなり、その次から再使用できます。</dd></div><div><dt>在庫と公開</dt><dd>各商品は在庫1です。購入者と所持SHOPは、使用するまで他PLへ公開されません。使用したSHOPと効果は一斉公開時に公開されます。</dd></div></dl><p class="rulebook-note">解禁済みの商品は、以降の自由時間でも購入できます。SHOPカード自体はココフォリアへ反映しません。</p></details>` : ''}${stationEntries.length ? `<details class="rulebook-section" open><summary>到着済みの駅ルール</summary><div class="rulebook-stations">${stationEntries.map(rulebookStationHtml).join('')}</div></details>` : ''}</div></section></div>`;
+  const disclosure = state.rulebookDisclosure || {};
+  const sections = [
+    disclosure.basicRules ? basicRulebookHtml() : '',
+    disclosure.packs ? packRulebookHtml(packs) : '',
+    shopRulesRevealed() ? `<details class="rulebook-section" open><summary>冥貨とSHOP</summary><dl class="rulebook-list"><div><dt>冥貨</dt><dd>ココフォリアで管理します。譲渡はWebからGMへ申請し、GMが処理します。</dd></div><div><dt>購入</dt><dd>自由時間に、使用可能な冥貨を好きな組み合わせで投入します。支払額は商品価格以上、商品価格＋7以下です。超過分はおつりとして返却されます。</dd></div><div><dt>SHOPカード</dt><dd>購入後はWeb上でゲーム終了まで所持します。1ターンに使えるのは1枚まで。使用したカードは次の1ターンだけCTとなり、その次から再使用できます。</dd></div><div><dt>在庫と公開</dt><dd>各商品は在庫1です。購入者と所持SHOPは、使用するまで他PLへ公開されません。使用したSHOPと効果は一斉公開時に公開されます。</dd></div></dl><p class="rulebook-note">解禁済みの商品は、以降の自由時間でも購入できます。SHOPカード自体はココフォリアへ反映しません。</p></details>` : '',
+    stationEntries.length ? `<details class="rulebook-section" open><summary>到着済みの駅ルール</summary><div class="rulebook-stations">${stationEntries.map(rulebookStationHtml).join('')}</div></details>` : ''
+  ].filter(Boolean);
+  return `<div class="rulebook-backdrop" role="presentation"><section class="rulebook-modal" role="dialog" aria-modal="true" aria-labelledby="rulebookTitle"><header><div><span class="eyebrow">RULEBOOK</span><h2 id="rulebookTitle">公開ルール一覧</h2><p>読み上げ済みの公開ルールを、いつでも確認できます。</p></div><button type="button" class="secondary small" data-close-rulebook>閉じる</button></header><div class="rulebook-body">${sections.join('') || '<p class="rulebook-note">まだ公開済みのルールはありません。GMの読み上げをお待ちください。</p>'}</div></section></div>`;
 }
 function renderRulebook() {
   document.querySelector('.rulebook-backdrop')?.remove();

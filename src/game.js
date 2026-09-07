@@ -116,6 +116,14 @@ function ensureRoomState(room) {
   }
 }
 
+function rulebookDisclosure(room) {
+  const steps = GAME_GUIDE.rulebookDisclosureSteps || {};
+  return {
+    basicRules: room.gameGuideStep >= (steps.basicRules || Infinity),
+    packs: room.gameGuideStep >= (steps.packs || Infinity)
+  };
+}
+
 export function applyAction(room, actor, action) {
   ensureRoomState(room);
   switch (action.type) {
@@ -1896,6 +1904,7 @@ export function projectState(room, actor) {
   return {
     code: room.code, testMode: Boolean(room.testMode), phase: room.phase, station: room.stationIndex >= 0 ? STATIONS[room.stationIndex] : null,
     stationTurn: room.stationTurn, globalTurnIndex: room.globalTurnIndex, timer: room.timer, introductionStep: room.introductionStep || 0, activeStationEffectIds: activeStationEffectIds(room),
+    rulebookDisclosure: rulebookDisclosure(room),
     gameGuide: room.phase === PHASE.GAME_GUIDE ? { title: GAME_GUIDE.title, lines: narrativeBlocks(GAME_GUIDE.lines), step: room.gameGuideStep } : null,
     stationIntroduction: stationIntroduction ? { title: stationIntroduction.title, lines: narrativeBlocks(stationIntroduction.lines), step: room.stationIntroductionStep } : null,
     rewardNarration,
