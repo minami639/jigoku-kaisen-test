@@ -663,6 +663,11 @@ test('Infinite Hell announces support and special outcomes without creating curr
   const room = createTestRoom();
   applyAction(room, room.gm, { type: 'TEST_JUMP_PHASE', phase: 'TURN_RESULT', stationIndex: 6, stationTurn: 5 });
   const player = room.players[0];
+  const fallenPlayer = room.players[1];
+  player.hp = 4;
+  fallenPlayer.hp = 6;
+  fallenPlayer.stationStats.reachedZero = true;
+  fallenPlayer.isDeadState = true;
   player.stationStats.support = 2;
   player.cardUsage = [
     { id: 'history-1', cardId: 'flame-strike', stationId: 'scorch', stationIndex: 0, stationTurn: 1, globalTurnIndex: 1, result: 'RESOLVED' },
@@ -684,6 +689,9 @@ test('Infinite Hell announces support and special outcomes without creating curr
   while (room.phase === 'REWARD_NARRATION') applyAction(room, room.gm, { type: 'ADVANCE_REWARD_NARRATION' });
   assert.equal(room.phase, 'FINAL_RANKING');
   assert.equal(room.finalRanking.length, 7);
+  assert.equal(room.infiniteSurvivorIds.includes(player.participantId), true);
+  assert.equal(room.infiniteSurvivorIds.includes(fallenPlayer.participantId), false);
+  assert.equal(projectState(room, player).finalRanking.find(entry => entry.participantId === player.participantId).survivedInfinite, true);
   applyAction(room, room.gm, { type: 'START_FINAL_ALIGNMENT' });
   assert.equal(room.phase, 'FINAL_ALIGNMENT');
   assert.equal(room.timer.endsAt - room.timer.startedAt, 180_000);
@@ -692,6 +700,8 @@ test('Infinite Hell announces support and special outcomes without creating curr
   applyAction(room, room.gm, { type: 'CONFIRM_FINAL_ENDING', endingId: 'HELL_LOOP' });
   assert.equal(room.phase, 'ENDING');
   assert.equal(room.finalEnding.title, '地獄廻線');
+  assert.equal(room.finalEnding.infiniteSurvivorIds.includes(player.participantId), true);
+  assert.equal(room.finalEnding.infiniteSurvivorIds.includes(fallenPlayer.participantId), false);
 });
 
 test('test-mode playthrough reaches the final result after all 25 turns', () => {

@@ -31,7 +31,7 @@ export function createRoom(gmName = 'GM') {
   const gm = { participantId: id(), authToken: token(), role: 'GM', name: gmName.trim() || 'GM' };
   const room = {
     id: roomId, code, phase: PHASE.LOBBY, gm, players: [], stationIndex: -1, stationTurn: 0,
-    globalTurnIndex: 0, timer: null, revealedUsages: [], stationResult: null, stationResults: [], finalRanking: null, finalEnding: null, rewardNarrationStep: 0, freeTimeIntroductionStep: 0, activeStationEffectIds: [], shopStock: Object.fromEntries(SHOP_ITEMS.map(item => [item.id, item.stock])), currencyTransactions: [], purchaseTransactions: [], transferRequests: [], firstPurchaseCompleted: false, events: [], createdAt: now(), updatedAt: now()
+    globalTurnIndex: 0, timer: null, revealedUsages: [], stationResult: null, stationResults: [], finalRanking: null, infiniteSurvivorIds: null, finalEnding: null, rewardNarrationStep: 0, freeTimeIntroductionStep: 0, activeStationEffectIds: [], shopStock: Object.fromEntries(SHOP_ITEMS.map(item => [item.id, item.stock])), currencyTransactions: [], purchaseTransactions: [], transferRequests: [], firstPurchaseCompleted: false, events: [], createdAt: now(), updatedAt: now()
   };
   event(room, 'ROOM_CREATED', { gmName: gm.name });
   return room;
@@ -87,6 +87,7 @@ function ensureRoomState(room) {
   room.activeStationEffectIds ||= [];
   room.gameGuideStep ||= 0;
   room.finalRanking ||= null;
+  room.infiniteSurvivorIds ??= null;
   room.finalEnding ||= null;
   room.stationResults ||= [];
   for (const transaction of room.purchaseTransactions) {
@@ -307,9 +308,9 @@ export function applyAction(room, actor, action) {
         HELL_LOOP: '地獄廻線'
       };
       if (!endings[action.endingId]) throw new Error('エンディング種別が不正です');
-      room.finalEnding = { id: action.endingId, title: endings[action.endingId], decidedAt: now() };
+      room.finalEnding = { id: action.endingId, title: endings[action.endingId], infiniteSurvivorIds: [...(room.infiniteSurvivorIds || [])], decidedAt: now() };
       room.phase = PHASE.ENDING;
-      event(room, 'ENDING_CONFIRMED', { endingId: action.endingId });
+      event(room, 'ENDING_CONFIRMED', { endingId: action.endingId, infiniteSurvivorIds: room.finalEnding.infiniteSurvivorIds });
       break;
     }
     case 'ADVANCE_STATION_INTRODUCTION':
@@ -1612,9 +1613,11 @@ function advanceRewardNarration(room) {
   room.rewardNarrationStep = 0;
   room.timer = null;
   if (room.stationResult?.noCurrencyRewards) {
+    room.infiniteSurvivorIds = room.players.filter(player => player.hp > 0 && !player.stationStats.reachedZero).map(player => player.participantId);
     room.finalRanking = calculateFinalRanking(room);
     room.phase = PHASE.FINAL_RANKING;
-    event(room, 'FINAL_RANKING_READY', { stationId: STATIONS[room.stationIndex].id, rankings: room.finalRanking });
+    event(room, 'INFINITE_SURVIVORS_CONFIRMED', { participantIds: room.infiniteSurvivorIds });
+    event(room, 'FINAL_RANKING_READY', { stationId: STATIONS[room.stationIndex].id, rankings: room.finalRanking, infiniteSurvivorIds: room.infiniteSurvivorIds });
     return;
   }
   room.phase = PHASE.CURRENCY_SYNC_WAIT;
@@ -1628,7 +1631,7 @@ function calculateFinalRanking(room) {
     const signature = [player.hp, player.totalStats.damageDealt, player.totalStats.support, player.totalStats.damageTaken].join(':');
     const rank = previous?.signature === signature ? previous.rank : index + 1;
     previous = { signature, rank };
-    return { participantId: player.participantId, playerNumber: player.playerNumber, rank, hp: player.hp, totalDamageDealt: player.totalStats.damageDealt, totalSupport: player.totalStats.support, totalDamageTaken: player.totalStats.damageTaken };
+    return { participantId: player.participantId, playerNumber: player.playerNumber, rank, hp: player.hp, totalDamageDealt: player.totalStats.damageDealt, totalSupport: player.totalStats.support, totalDamageTaken: player.totalStats.damageTaken, survivedInfinite: Boolean(room.infiniteSurvivorIds?.includes(player.participantId)) };
   });
 }
 
@@ -1903,6 +1906,7 @@ export function projectState(room, actor) {
     testPlayers: isGm ? room.players.map(player => ({ ...privatePlayer(player, room), selection: player.selection, confirmed: player.confirmed })) : undefined,
     stationResult: room.stationResult,
     finalRanking: room.finalRanking,
+    infiniteSurvivorIds: room.infiniteSurvivorIds,
     finalEnding: room.finalEnding,
     currencySync: room.phase === PHASE.CURRENCY_SYNC_WAIT ? { total: stationCurrencyTransactions.length, pending: stationCurrencyTransactions.filter(transaction => !transaction.cocofoliaApplied).length } : null,
     stationCurrencyTransactions: isGm ? stationCurrencyTransactions : undefined,
