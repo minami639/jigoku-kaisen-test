@@ -650,6 +650,9 @@ test('third scorch result follows reward narration, Cocofolia sync, and GM-start
   }
   applyAction(room, room.gm, { type: 'START_FREE_TIME' });
   assert.equal(room.phase, 'FREE_TIME_INTRO');
+  const freeTimeNarration = projectState(room, room.players[0]).freeTimeIntroduction;
+  assert.match(freeTimeNarration.lines.flat().join('\n'), /第一ショップ/);
+  assert.match(freeTimeNarration.lines.flat().join('\n'), /1ターンに使えるSHOPカードは1枚まで/);
   while (room.phase === 'FREE_TIME_INTRO') applyAction(room, room.gm, { type: 'ADVANCE_FREE_TIME_INTRODUCTION' });
   assert.equal(room.phase, 'FREE_TIME');
   assert.equal(room.timer.endsAt - room.timer.startedAt, 300_000);
