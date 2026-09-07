@@ -133,11 +133,13 @@ function renderRulebook() {
   document.querySelector('.rulebook-backdrop')?.remove();
   if (!rulebookOpen || !state) return;
   document.body.insertAdjacentHTML('beforeend', rulebookHtml());
+  const backdrop = document.querySelector('.rulebook-backdrop');
+  const close = () => { rulebookOpen = false; renderRulebook(); };
+  backdrop?.querySelector('[data-close-rulebook]')?.addEventListener('click', close);
+  backdrop?.addEventListener('click', event => { if (event.target === event.currentTarget) close(); });
 }
 function bindRulebook() {
   document.querySelectorAll('[data-open-rulebook]').forEach(button => button.addEventListener('click', () => { rulebookOpen = true; renderRulebook(); }));
-  document.querySelectorAll('[data-close-rulebook]').forEach(button => button.addEventListener('click', () => { rulebookOpen = false; renderRulebook(); }));
-  document.querySelector('.rulebook-backdrop')?.addEventListener('click', event => { if (event.target === event.currentTarget) { rulebookOpen = false; renderRulebook(); } });
 }
 function gameHeaderHtml(roleLabel) { const station = state.station; const disclosure = stationBriefingDisclosure(); const turn = state.phase === 'STATION_INTRODUCTION' ? (disclosure.rounds ? `全${station?.turnCount || '—'}ターン` : '—') : station ? `${state.stationTurn} / ${station.turnCount}` : '—'; return `<section class="game-header"><div><span class="eyebrow">${esc(roleLabel)}</span><strong>${station ? esc(station.name) : phaseName()}</strong></div><div class="header-stat ${disclosure.rounds ? 'briefing-revealed' : ''}"><span>TURN</span><b>${turn}</b></div><div class="header-stat"><span>PHASE</span><b>${phaseName()}</b></div><div class="header-stat timer-stat"><span>TIME</span>${timerHtml(true)}</div><div class="header-rulebook"><button type="button" class="secondary small" data-open-rulebook>ルール一覧</button></div>${station && disclosure.effect ? `<div class="station-effect briefing-revealed" tabindex="0" aria-label="駅固有效果の詳細を表示"><span>駅固有效果 <small>詳細</small></span><b>${esc(stationEffectHeaderText(station))}</b>${stationEffectTooltipHtml(station)}</div>` : ''}</section>`; }
 
